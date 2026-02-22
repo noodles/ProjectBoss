@@ -42,7 +42,7 @@ proj list --sort name --limit 5
 
 ### `proj info <query>`
 
-Show full details for a project. Query by ID, name, or slug.
+Show full details for a project. Query by ID, name, or slug. Auto-detects GitHub/Bitbucket repo URLs from git remotes.
 
 ```bash
 proj info 3
@@ -85,6 +85,18 @@ proj rescan --discover --verbose      # show each discovered project
 
 Use `--discover` after initial install to import all your existing projects.
 
+### `proj ignore`
+
+Remove non-project folders from the index and prevent them from being re-discovered.
+
+```bash
+proj ignore 3                         # ignore by ID
+proj ignore "shared"                  # ignore by name
+proj ignore ~/Documents/01_Projects/NVE/docs   # ignore by path
+proj ignore --list                    # show all ignored paths
+proj ignore --remove docs             # un-ignore (substring match)
+```
+
 ### `proj help`
 
 Show help for any command.
@@ -119,6 +131,7 @@ Thresholds are configurable in `~/.proj/config.json`.
 
 - Config: `~/.proj/config.json`
 - Index: `~/.proj/index.json`
+- Ignored: `~/.proj/ignored.json`
 - Projects Index: `PROJECTS_INDEX.md` at the root of each base directory
 
 ## Symlinks

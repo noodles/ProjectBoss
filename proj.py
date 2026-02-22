@@ -20,6 +20,7 @@ import uuid
 PROJ_DIR = os.path.expanduser("~/.proj")
 CONFIG_PATH = os.path.join(PROJ_DIR, "config.json")
 INDEX_PATH = os.path.join(PROJ_DIR, "index.json")
+IGNORED_PATH = os.path.join(PROJ_DIR, "ignored.json")
 
 DEFAULT_CONFIG = {
     "base_directories": [
@@ -291,6 +292,45 @@ def now_iso():
 
 
 # ---------------------------------------------------------------------------
+# Helpers — git remote detection
+# ---------------------------------------------------------------------------
+
+
+def get_repo_url(project_root):
+    """Detect a GitHub/Bitbucket repo URL from the git remote origin."""
+    if not os.path.isdir(project_root):
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_root, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        raw = result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return _remote_to_web_url(raw)
+
+
+def _remote_to_web_url(raw):
+    """Convert a git remote URL to a web URL for GitHub/Bitbucket."""
+    # SSH: git@github.com:user/repo.git
+    m = re.match(r"^git@([^:]+):(.+?)(?:\.git)?$", raw)
+    if m:
+        host, path = m.group(1), m.group(2)
+        return f"https://{host}/{path}"
+
+    # HTTPS: https://github.com/user/repo.git
+    m = re.match(r"^https?://([^/]+)/(.+?)(?:\.git)?$", raw)
+    if m:
+        host, path = m.group(1), m.group(2)
+        return f"https://{host}/{path}"
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Config management
 # ---------------------------------------------------------------------------
 
@@ -337,6 +377,28 @@ def load_index():
 def save_index(entries):
     ensure_dir(PROJ_DIR)
     atomic_write_json(INDEX_PATH, entries)
+
+
+def load_ignored():
+    if not os.path.isfile(IGNORED_PATH):
+        return []
+    with open(IGNORED_PATH) as f:
+        return json.load(f)
+
+
+def save_ignored(paths):
+    ensure_dir(PROJ_DIR)
+    atomic_write_json(IGNORED_PATH, sorted(set(paths)))
+
+
+def is_ignored(proj_path, ignored):
+    """Check if a path (or its realpath) is in the ignored list."""
+    # Use normcase for case-insensitive filesystems (macOS)
+    nc = os.path.normcase
+    proj_norm = nc(proj_path)
+    real_norm = nc(os.path.realpath(proj_path))
+    ignored_norm = {nc(p) for p in ignored}
+    return proj_norm in ignored_norm or real_norm in ignored_norm
 
 
 def next_id(entries):
@@ -727,9 +789,13 @@ def cmd_info(args):
         print(f"No project found for '{args.query}'")
         return
 
+    repo_url = get_repo_url(entry.get("project_root", ""))
+
     if args.json:
         out = dict(entry)
         out["status"] = compute_status(entry, cfg)
+        if repo_url:
+            out["repo_url"] = repo_url
         print(json.dumps(out, indent=2))
         return
 
@@ -741,6 +807,8 @@ def cmd_info(args):
     print(f"  Tags:          {', '.join(entry.get('tags', [])) or '—'}")
     print(f"  Project Root:  {entry.get('project_root', '—')}")
     print(f"  Docs:          {entry.get('docs_path', '—')}")
+    if repo_url:
+        print(f"  Repo:          {repo_url}")
     print(f"  Base Dir:      {entry.get('base_directory', '—')}")
     print(f"  Created:       {format_date(entry.get('created_at'))}")
     print(f"  Last Worked:   {format_date(entry.get('last_worked_at'))}")
@@ -961,6 +1029,7 @@ def cmd_rescan(args):
 
     # Discover unindexed projects
     if args.discover:
+        ignored = load_ignored()
         # Match by both symlink path and resolved real path to avoid duplicates
         indexed_real = set()
         for e in entries:
@@ -970,6 +1039,7 @@ def cmd_rescan(args):
                 indexed_real.add(os.path.realpath(p))
 
         discovered = 0
+        skipped = 0
         for bd in cfg.get("base_directories", []):
             base = os.path.expanduser(bd["path"])
             if not os.path.isdir(base):
@@ -984,6 +1054,11 @@ def cmd_rescan(args):
                         continue
                     real_path = os.path.realpath(proj_path)
                     if proj_path in indexed_real or real_path in indexed_real:
+                        continue
+                    if is_ignored(proj_path, ignored):
+                        skipped += 1
+                        if args.verbose:
+                            print(f"  IGNORED: {proj_name} ({cat_name})")
                         continue
                     # Found an unindexed project
                     is_link = os.path.islink(proj_path)
@@ -1025,10 +1100,90 @@ def cmd_rescan(args):
 
         if discovered:
             print(f"Discovered {discovered} new project(s).")
+        if skipped and args.verbose:
+            print(f"Skipped {skipped} ignored path(s).")
 
     save_index(entries)
     generate_projects_index(entries, cfg)
     print(f"Rescan complete. Updated {updated} timestamp(s).")
+
+
+# ---------------------------------------------------------------------------
+# Command: ignore
+# ---------------------------------------------------------------------------
+
+
+def cmd_ignore(args):
+    cfg = load_config()
+    entries = load_index()
+    ignored = load_ignored()
+
+    if args.list_ignored:
+        if not ignored:
+            print("No ignored paths.")
+            return
+        print("Ignored paths:")
+        for p in sorted(ignored):
+            print(f"  {p}")
+        return
+
+    if args.remove:
+        removed = []
+        for pattern in args.remove:
+            matches = [p for p in ignored if pattern in p]
+            removed.extend(matches)
+        if not removed:
+            print(f"No ignored paths matching '{args.remove}'")
+            return
+        for p in removed:
+            ignored.remove(p)
+        save_ignored(ignored)
+        for p in removed:
+            print(f"Un-ignored: {p}")
+        return
+
+    # Default: ignore by query (ID, name, path)
+    query = args.query
+    if not query:
+        print("Usage: proj ignore <query>  or  proj ignore --list")
+        return
+
+    entry = find_entry(entries, query)
+    if entry:
+        path = entry["project_root"]
+        # Remove from index
+        entries = [e for e in entries if e["id"] != entry["id"]]
+        save_index(entries)
+        # Add to ignored
+        ignored.append(path)
+        save_ignored(ignored)
+        generate_projects_index(entries, cfg)
+        print(f"Ignored: {entry['name']} ({path})")
+        print("  Removed from index and won't be re-discovered.")
+        return
+
+    # Maybe it's a raw path
+    path = os.path.abspath(os.path.expanduser(query))
+    if os.path.isdir(path):
+        # Remove from index if present
+        removed_name = None
+        for e in entries:
+            if e.get("project_root") == path or os.path.realpath(e.get("project_root", "")) == os.path.realpath(path):
+                removed_name = e["name"]
+                entries = [x for x in entries if x["id"] != e["id"]]
+                break
+        save_index(entries)
+        ignored.append(path)
+        save_ignored(ignored)
+        generate_projects_index(entries, cfg)
+        if removed_name:
+            print(f"Ignored: {removed_name} ({path})")
+        else:
+            print(f"Ignored: {path}")
+        print("  Won't be discovered by rescan.")
+        return
+
+    print(f"No project or directory found for '{query}'")
 
 
 # ---------------------------------------------------------------------------
@@ -1100,6 +1255,14 @@ def build_parser():
                           help="Find unindexed projects in base dirs")
     p_rescan.add_argument("--verbose", "-v", action="store_true")
 
+    # ignore
+    p_ignore = sub.add_parser("ignore", help="Ignore folders that aren't projects")
+    p_ignore.add_argument("query", nargs="?", help="Project ID, name, or path to ignore")
+    p_ignore.add_argument("--list", "-l", dest="list_ignored", action="store_true",
+                          help="List all ignored paths")
+    p_ignore.add_argument("--remove", "-r", action="append",
+                          help="Un-ignore a path (substring match)")
+
     # help
     p_help = sub.add_parser("help", help="Show help for a command")
     p_help.add_argument("topic", nargs="?", help="Command to get help for")
@@ -1137,6 +1300,7 @@ def main():
         "edit": cmd_edit,
         "open": cmd_open,
         "rescan": cmd_rescan,
+        "ignore": cmd_ignore,
     }
 
     handler = commands.get(args.command)
