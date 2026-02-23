@@ -10,7 +10,9 @@ import re
 import shutil
 import subprocess
 import sys
+import termios
 import textwrap
+import tty
 import uuid
 
 # ---------------------------------------------------------------------------
@@ -36,7 +38,8 @@ DEFAULT_CONFIG = {
         "stale_after_days": 14,
         "archived_after_days": 90,
     },
-    "editor": "hx",
+    "project_editor": "Zed",
+    "prompt_editor": "Typora",
     "templates": {
         "initial_prompt_name": "{slug}_initial_prompt.md",
         "readme_name": "README.md",
@@ -187,6 +190,29 @@ def update_frontmatter_in_file(filepath, updates):
 # ---------------------------------------------------------------------------
 # Helpers — interactive prompts
 # ---------------------------------------------------------------------------
+
+
+def read_key():
+    """Read a single keypress from stdin without waiting for Enter."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return ch
+
+
+def open_in_app(app, path):
+    """Open a file or directory in a macOS app via `open -a`."""
+    try:
+        subprocess.run(
+            ["open", "-a", app, path],
+            check=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        print(f"  Could not open {app}.")
 
 
 def prompt_text(label, default=None):
@@ -491,7 +517,7 @@ def generate_projects_index(entries, config):
 # ---------------------------------------------------------------------------
 
 
-def create_initial_prompt(path, meta, notes=""):
+def create_initial_prompt(path, meta, brief=""):
     """Create the initial prompt markdown file."""
     fm = build_frontmatter({
         "project": meta["name"],
@@ -503,9 +529,9 @@ def create_initial_prompt(path, meta, notes=""):
     body = f"\n# {meta['name']}\n\n"
     if meta.get("summary"):
         body += f"{meta['summary']}\n\n"
-    body += "## Notes\n\n"
-    if notes:
-        body += notes + "\n"
+    body += "## Initial Project Prompt\n\n"
+    if brief:
+        body += brief + "\n"
     with open(path, "w") as f:
         f.write(fm + "\n" + body)
 
@@ -550,10 +576,10 @@ def cmd_config(args):
 
     if action == "edit":
         cfg = load_config()
-        editor = cfg.get("editor", "hx")
+        editor = cfg.get("project_editor", "Zed")
         if not os.path.isfile(CONFIG_PATH):
             save_config(cfg)
-        subprocess.run([editor, CONFIG_PATH])
+        open_in_app(editor, CONFIG_PATH)
         return
 
     if action == "set":
@@ -610,7 +636,7 @@ def cmd_new(args):
         category = prompt_text("Category", default=default_cat) or "General"
 
     # 3. Summary
-    summary = args.summary or prompt_text("Summary (one line)", default="")
+    summary = args.summary or prompt_text("Summary (optional, one line)", default="")
 
     # 4. Base directory
     bases = cfg.get("base_directories", [])
@@ -636,17 +662,49 @@ def cmd_new(args):
         if not prompt_confirm("Continue anyway?", default=False):
             return
 
-    # 6. Notes
-    notes = ""
+    # 6. Initial project prompt
+    brief = ""
     if not args.no_notes:
-        print("\nNotes (optional — enter blank line to finish):")
-        note_lines = []
-        while True:
-            line = input()
-            if line == "":
-                break
-            note_lines.append(line)
-        notes = "\n".join(note_lines)
+        print("\nInitial project prompt (optional):")
+        print("  \\ = paste clipboard | Enter = skip")
+        brief_lines = []
+
+        # Intercept first keypress for instant \ and Enter handling
+        first = read_key()
+        if first == "\\":
+            try:
+                result = subprocess.run(
+                    ["pbpaste"], capture_output=True, text=True, timeout=5,
+                )
+                clipboard = result.stdout.strip() if result.returncode == 0 else ""
+            except (OSError, subprocess.TimeoutExpired):
+                clipboard = ""
+            if clipboard:
+                line_count = clipboard.count("\n") + 1
+                brief_lines.append(clipboard)
+                print(f"  Pasted ({line_count} line{'s' if line_count != 1 else ''}). Add more or Enter to finish.")
+            else:
+                print("  Clipboard is empty.")
+        elif first in ("\r", "\n"):
+            pass  # skip
+        elif first == "\x03":
+            raise KeyboardInterrupt
+        else:
+            # User started typing — collect the rest of the first line
+            sys.stdout.write(first)
+            sys.stdout.flush()
+            rest = input()
+            brief_lines.append(first + rest)
+
+        # Continue collecting lines if we have content or user started typing
+        if brief_lines:
+            while True:
+                line = input()
+                if line == "":
+                    break
+                brief_lines.append(line)
+
+        brief = "\n".join(brief_lines)
 
     # 7. Create directories + files
     ensure_dir(docs_path)
@@ -669,7 +727,7 @@ def cmd_new(args):
         "tags": [],
     }
 
-    create_initial_prompt(initial_prompt_path, meta, notes)
+    create_initial_prompt(initial_prompt_path, meta, brief)
     create_readme(readme_path, meta)
 
     # 8. Add to index
@@ -700,10 +758,23 @@ def cmd_new(args):
     if summary:
         print(f"  Summary:  {summary}")
 
-    # 10. Offer to open in editor
-    editor = cfg.get("editor", "hx")
-    if prompt_confirm(f"\nOpen in {editor}?", default=False):
-        subprocess.run([editor, project_root])
+    # 10. Offer to open in editor(s)
+    if not args.no_notes:
+        project_editor = cfg.get("project_editor", "Zed")
+        prompt_editor = cfg.get("prompt_editor", "Typora")
+        choice = prompt_choice("What next?", [
+            f"Open project in {project_editor}",
+            f"Edit prompt in {prompt_editor}",
+            "Both 1 & 2",
+            "Skip",
+        ], default="Skip")
+        if choice.startswith("Open project"):
+            open_in_app(project_editor, project_root)
+        elif choice.startswith("Edit prompt"):
+            open_in_app(prompt_editor, initial_prompt_path)
+        elif choice == "Both 1 & 2":
+            open_in_app(project_editor, project_root)
+            open_in_app(prompt_editor, initial_prompt_path)
 
 
 # ---------------------------------------------------------------------------
@@ -958,8 +1029,8 @@ def cmd_open(args):
         return
 
     if args.editor:
-        editor = cfg.get("editor", "hx")
-        subprocess.run([editor, target])
+        editor = cfg.get("project_editor", "Zed")
+        open_in_app(editor, target)
         return
 
     if args.finder:
@@ -1212,7 +1283,7 @@ def build_parser():
     p_new.add_argument("--category", "-c", help="Category")
     p_new.add_argument("--summary", "-s", help="One-line summary")
     p_new.add_argument("--base", "-b", help="Base directory name")
-    p_new.add_argument("--no-notes", action="store_true", help="Skip notes prompt")
+    p_new.add_argument("--no-notes", action="store_true", help="Skip prompts (non-interactive)")
 
     # list
     p_list = sub.add_parser("list", aliases=["ls"], help="List projects")
@@ -1311,4 +1382,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print("\nAborted.")
