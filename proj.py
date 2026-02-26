@@ -730,7 +730,20 @@ def cmd_new(args):
     create_initial_prompt(initial_prompt_path, meta, brief)
     create_readme(readme_path, meta)
 
-    # 8. Add to index
+    # 8. Initialise git repository
+    git_ok = False
+    if prompt_confirm("Initialise git repository?", default=True):
+        try:
+            subprocess.run(
+                ["git", "init"],
+                cwd=project_root,
+                check=True, capture_output=True,
+            )
+            git_ok = True
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"  Warning: could not initialise git repo: {exc}")
+
+    # 9. Add to index
     entry = {
         "id": entry_id,
         "name": name,
@@ -748,7 +761,7 @@ def cmd_new(args):
     entries.append(entry)
     save_index(entries)
 
-    # 9. Regenerate PROJECTS_INDEX.md
+    # 10. Regenerate PROJECTS_INDEX.md
     generate_projects_index(entries, cfg)
 
     print(f"\nCreated project: {name}")
@@ -757,8 +770,10 @@ def cmd_new(args):
     print(f"  Category: {category}")
     if summary:
         print(f"  Summary:  {summary}")
+    if git_ok:
+        print(f"  Git:      initialised")
 
-    # 10. Offer to open in editor(s)
+    # 11. Offer to open in editor(s)
     if not args.no_notes:
         project_editor = cfg.get("project_editor", "Zed")
         prompt_editor = cfg.get("prompt_editor", "Typora")
