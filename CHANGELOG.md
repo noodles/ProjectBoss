@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4
+
+- Add `proj delete` command (aliased as `proj rm`) for removing projects from the index, with optional disk cleanup
+- Add `--prune` flag to `proj rescan` to bulk-remove projects whose directories no longer exist
+- Add `--delete <id>` flag to `proj idea` for deleting ideas
+- `proj rescan` now reports missing projects by default instead of silently skipping them
+- Skip `node_modules`, `__pycache__`, `venv`, and other heavy directories during rescan to fix slow/hanging rescans
+- Update welcome screen to list all commands instead of a subset
+- Add missing help text to `list` and `edit` argument parsers
+
 ## 0.1.3
 
 - Add `proj idea` command for quick-capturing project ideas with emoji category labels (bug, feature, improvement, etc.)

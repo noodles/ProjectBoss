@@ -46,6 +46,14 @@ There is no build step, no test suite, no linter configured.
 - `index.json` — array of project entries (id, name, slug, category, path, timestamps, tags, etc.)
 - `ignored.json` — array of paths excluded from discovery
 
+## Release Process
+
+When committing changes, **always** bump the version and update the changelog:
+
+1. Bump `VERSION` in `proj.py` (patch version for fixes/features, minor for larger changes)
+2. Add a new section to `CHANGELOG.md` describing what changed
+3. Include the version bump and changelog update in the same commit as the code changes
+
 ## Code Conventions
 
 - `snake_case` for all functions and variables; `UPPER_CASE` for constants
