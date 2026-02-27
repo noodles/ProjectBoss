@@ -23,6 +23,19 @@ PROJ_DIR = os.path.expanduser("~/.proj")
 CONFIG_PATH = os.path.join(PROJ_DIR, "config.json")
 INDEX_PATH = os.path.join(PROJ_DIR, "index.json")
 IGNORED_PATH = os.path.join(PROJ_DIR, "ignored.json")
+IDEAS_PATH = os.path.join(PROJ_DIR, "ideas.json")
+
+IDEA_CATEGORIES = [
+    ("bug",           "🐛", "Bug",           "errors, unexpected behavior"),
+    ("feature",       "✨", "Feature",       "new features, functionality"),
+    ("improvement",   "💡", "Improvement",   "suggestions, improvements, RFC"),
+    ("documentation", "📝", "Documentation", "READMEs, docs"),
+    ("performance",   "🔥", "Performance",   "optimizations, speed"),
+    ("security",      "🔒", "Security",      "vulnerabilities, security patches"),
+    ("test",          "🧪", "Test",          "adding, updating tests"),
+    ("release",       "🎉", "Release",       "release-related"),
+    ("refactor",      "🔧", "Refactor",      "refactoring without changing functionality"),
+]
 
 DEFAULT_CONFIG = {
     "base_directories": [
@@ -46,7 +59,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -374,6 +387,7 @@ def print_welcome():
         ("proj list",        "List all tracked projects"),
         ("proj open <name>", "Open a project directory"),
         ("proj info <name>", "Show project details"),
+        ("proj idea <name>", "Capture a project idea"),
         ("proj rescan",      "Discover unindexed projects"),
     ]
     for cmd, desc in cmds:
@@ -453,6 +467,48 @@ def _remote_to_web_url(raw):
     return None
 
 
+def _gh_available():
+    """Return True if the GitHub CLI is installed and authenticated."""
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _create_gh_issue(project_root, title, body, label):
+    """Create a GitHub issue via `gh`. Returns {"url": ..., "number": ...} or None."""
+    cmd = ["gh", "issue", "create", "--title", title]
+    if body:
+        cmd += ["--body", body]
+    if label:
+        cmd += ["--label", label]
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15, cwd=project_root,
+        )
+        if result.returncode != 0 and label:
+            # Retry without label (label may not exist on repo)
+            cmd = ["gh", "issue", "create", "--title", title]
+            if body:
+                cmd += ["--body", body]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=15, cwd=project_root,
+            )
+        if result.returncode != 0:
+            return None
+        url = result.stdout.strip()
+        # gh returns the issue URL, extract the number from the end
+        number = url.rstrip("/").rsplit("/", 1)[-1] if url else None
+        return {"url": url, "number": number}
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Config management
 # ---------------------------------------------------------------------------
@@ -512,6 +568,26 @@ def load_ignored():
 def save_ignored(paths):
     ensure_dir(PROJ_DIR)
     atomic_write_json(IGNORED_PATH, sorted(set(paths)))
+
+
+def load_ideas():
+    if not os.path.isfile(IDEAS_PATH):
+        return []
+    with open(IDEAS_PATH) as f:
+        return json.load(f)
+
+
+def save_ideas(ideas):
+    ensure_dir(PROJ_DIR)
+    atomic_write_json(IDEAS_PATH, ideas)
+
+
+def _next_idea_id(ideas):
+    """Return the next sequential integer ID for ideas."""
+    if not ideas:
+        return "1"
+    max_id = max(int(i["id"]) for i in ideas if i.get("id", "").isdigit())
+    return str(max_id + 1)
 
 
 def is_ignored(proj_path, ignored):
@@ -1370,6 +1446,199 @@ def cmd_ignore(args):
 
 
 # ---------------------------------------------------------------------------
+# Ideas — display helpers
+# ---------------------------------------------------------------------------
+
+
+def _idea_category_emoji(cat_key):
+    """Return the emoji for a category key, or empty string."""
+    if cat_key == "new_app":
+        return "🚀"
+    for key, emoji, _, _ in IDEA_CATEGORIES:
+        if key == cat_key:
+            return emoji
+    return ""
+
+
+def _idea_list(ideas, entries, project_filter=None):
+    """Display open ideas grouped by project, with done count at end."""
+    # Build project name lookup
+    proj_names = {e["id"]: e["name"] for e in entries}
+
+    filtered = ideas
+    if project_filter:
+        filtered = [i for i in ideas if i.get("project_id") == project_filter]
+
+    open_ideas = [i for i in filtered if not i.get("done")]
+    done_ideas = [i for i in filtered if i.get("done")]
+
+    if not open_ideas and not done_ideas:
+        print("No ideas recorded yet. Run `proj idea` to capture one.")
+        return
+
+    # Group open ideas by project
+    by_project = {}
+    for idea in open_ideas:
+        pname = idea.get("project_name") or proj_names.get(idea.get("project_id")) or "New App Ideas"
+        by_project.setdefault(pname, []).append(idea)
+
+    if open_ideas:
+        for pname in sorted(by_project):
+            print(f"\n  {BOLD}{pname}{RESET}")
+            for idea in by_project[pname]:
+                emoji = _idea_category_emoji(idea.get("category", ""))
+                iid = idea["id"]
+                title = idea["title"]
+                gh = ""
+                if idea.get("gh_issue_number"):
+                    gh = f"  {DIM}#{idea['gh_issue_number']}{RESET}"
+                date = format_date(idea.get("created_at"), short=True)
+                print(f"    {DIM}{iid:>3}{RESET}  {emoji}  {title}{gh}  {DIM}{date}{RESET}")
+    else:
+        print("\n  No open ideas.")
+
+    # Done summary
+    if done_ideas:
+        print(f"\n  {DIM}Done ({len(done_ideas)}):{RESET}")
+        for idea in done_ideas[-5:]:
+            emoji = _idea_category_emoji(idea.get("category", ""))
+            pname = idea.get("project_name") or proj_names.get(idea.get("project_id")) or "New App"
+            print(f"    {DIM}{idea['id']:>3}  {emoji}  {idea['title']} ({pname}){RESET}")
+        if len(done_ideas) > 5:
+            print(f"    {DIM}... and {len(done_ideas) - 5} more{RESET}")
+    print()
+
+
+def _idea_mark_done(ideas, idea_id):
+    """Find idea by ID, set done=True, save. Returns True on success."""
+    for idea in ideas:
+        if idea["id"] == idea_id:
+            if idea.get("done"):
+                print(f"Idea #{idea_id} is already done.")
+                return True
+            idea["done"] = True
+            save_ideas(ideas)
+            emoji = _idea_category_emoji(idea.get("category", ""))
+            print(f"  {GREEN}Done:{RESET} {emoji}  {idea['title']}")
+            return True
+    print(f"No idea found with ID '{idea_id}'.")
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Command: idea
+# ---------------------------------------------------------------------------
+
+
+def cmd_idea(args):
+    entries = load_index()
+    ideas = load_ideas()
+
+    # --list mode
+    if args.list_ideas:
+        project_id = None
+        if args.project:
+            entry = find_entry(entries, args.project)
+            if not entry:
+                print(f"No project found for '{args.project}'")
+                return
+            project_id = entry["id"]
+        _idea_list(ideas, entries, project_filter=project_id)
+        return
+
+    # --done mode
+    if args.done:
+        _idea_mark_done(ideas, args.done)
+        return
+
+    # Capture mode — pick type first
+    cat_labels = [f"{emoji}  {name} — {desc}" for _, emoji, name, desc in IDEA_CATEGORIES]
+    new_app_label = "🚀  New App — idea for a brand new project"
+    all_labels = cat_labels + [new_app_label]
+    chosen_label = prompt_choice("Type", all_labels)
+
+    is_new_app = chosen_label == new_app_label
+    if is_new_app:
+        cat_key, cat_emoji = "new_app", "🚀"
+    else:
+        cat_idx = cat_labels.index(chosen_label)
+        cat_key, cat_emoji, _, _ = IDEA_CATEGORIES[cat_idx]
+
+    # Resolve project (skip for new app ideas)
+    entry = None
+    if not is_new_app:
+        if args.project:
+            entry = find_entry(entries, args.project)
+            if not entry:
+                print(f"No project found for '{args.project}'")
+                return
+        else:
+            if not entries:
+                print("No projects tracked. Run `proj new` first.")
+                return
+            cats = sorted({e.get("category", "") for e in entries if e.get("category")})
+            if len(cats) > 1:
+                group = prompt_choice("Project group", cats)
+                pool = [e for e in entries if e.get("category") == group]
+            else:
+                pool = entries
+            pool = sorted(pool, key=lambda e: e.get("last_worked_at", ""), reverse=True)
+            names = [e["name"] for e in pool]
+            chosen = prompt_choice("Select project", names)
+            entry = next(e for e in pool if e["name"] == chosen)
+
+    # Title
+    title = args.title
+    if not title:
+        title = prompt_text("Title")
+    if not title:
+        print("Title is required.")
+        return
+
+    # Body (optional)
+    body = args.body
+    if not body and not args.quick:
+        body = prompt_text("Description (optional)")
+
+    # Save idea locally
+    idea = {
+        "id": _next_idea_id(ideas),
+        "project_id": entry["id"] if entry else None,
+        "project_name": entry["name"] if entry else None,
+        "category": cat_key,
+        "title": title,
+        "body": body or "",
+        "created_at": now_iso(),
+        "gh_issue_url": None,
+        "gh_issue_number": None,
+        "done": False,
+    }
+    ideas.append(idea)
+    save_ideas(ideas)
+    print(f"\n  {GREEN}Saved:{RESET} {cat_emoji}  {title}")
+    if entry:
+        print(f"  {DIM}Idea #{idea['id']} for {entry['name']}{RESET}")
+    else:
+        print(f"  {DIM}Idea #{idea['id']} (new app){RESET}")
+
+    # Offer to create GitHub issue if repo has a remote
+    if entry:
+        project_root = entry.get("project_root", "")
+        repo_url = get_repo_url(project_root) if project_root else None
+        if repo_url and _gh_available():
+            if prompt_confirm("Create GitHub issue?"):
+                gh_body = body or ""
+                result = _create_gh_issue(project_root, title, gh_body, cat_key)
+                if result:
+                    idea["gh_issue_url"] = result["url"]
+                    idea["gh_issue_number"] = result["number"]
+                    save_ideas(ideas)
+                    print(f"  {GREEN}Issue created:{RESET} {result['url']}")
+                else:
+                    print(f"  {YELLOW}Could not create issue (gh error).{RESET}")
+
+
+# ---------------------------------------------------------------------------
 # Argparse setup
 # ---------------------------------------------------------------------------
 
@@ -1446,6 +1715,17 @@ def build_parser():
     p_ignore.add_argument("--remove", "-r", action="append",
                           help="Un-ignore a path (substring match)")
 
+    # idea
+    p_idea = sub.add_parser("idea", help="Capture or list project ideas")
+    p_idea.add_argument("project", nargs="?", help="Project ID, name, or slug")
+    p_idea.add_argument("--title", "-t", help="Idea title")
+    p_idea.add_argument("--body", "-b", help="Longer description")
+    p_idea.add_argument("--list", "-l", dest="list_ideas", action="store_true",
+                        help="List open ideas")
+    p_idea.add_argument("--done", "-d", metavar="ID", help="Mark idea as done")
+    p_idea.add_argument("--quick", "-q", action="store_true",
+                        help="Skip optional prompts")
+
     # help
     p_help = sub.add_parser("help", help="Show help for a command")
     p_help.add_argument("topic", nargs="?", help="Command to get help for")
@@ -1484,6 +1764,7 @@ def main():
         "open": cmd_open,
         "rescan": cmd_rescan,
         "ignore": cmd_ignore,
+        "idea": cmd_idea,
     }
 
     handler = commands.get(args.command)
