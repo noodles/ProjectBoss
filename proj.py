@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.1.0"
+VERSION = "0.1.2"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
