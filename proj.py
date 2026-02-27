@@ -48,6 +48,29 @@ DEFAULT_CONFIG = {
 
 VERSION = "0.1.0"
 
+# ANSI color support — disabled when piped or when NO_COLOR is set.
+_USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+BOLD = "\033[1m" if _USE_COLOR else ""
+DIM = "\033[2m" if _USE_COLOR else ""
+RESET = "\033[0m" if _USE_COLOR else ""
+CYAN = "\033[36m" if _USE_COLOR else ""
+GREEN = "\033[32m" if _USE_COLOR else ""
+YELLOW = "\033[33m" if _USE_COLOR else ""
+MAGENTA = "\033[35m" if _USE_COLOR else ""
+BOLD_CYAN = "\033[1;36m" if _USE_COLOR else ""
+BOLD_GREEN = "\033[1;32m" if _USE_COLOR else ""
+BOLD_MAGENTA = "\033[1;35m" if _USE_COLOR else ""
+
+_LOGO_LINES = [
+    r" ____            _           _     ____",
+    r"|  _ \ _ __ ___ (_) ___  ___| |_  | __ )  ___  ___ ___",
+    r"| |_) | '__/ _ \| |/ _ \/ __| __| |  _ \ / _ \/ __/ __|",
+    "|  __/| | | (_) | |  __/ (__| |_  | |_) | (_) \\__ \\__ \\",
+    r"|_|   |_|  \___/|_|\___|\___|\__| |____/ \___/|___/___/",
+]
+_LOGO_COLORS = [BOLD_CYAN, BOLD_CYAN, CYAN, BOLD_GREEN, GREEN]
+
 # ---------------------------------------------------------------------------
 # Helpers — filesystem / atomic writes
 # ---------------------------------------------------------------------------
@@ -292,6 +315,80 @@ def format_table(headers, rows, max_width=None):
     for row in rows:
         lines.append(fmt_row(row))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Helpers — welcome screen
+# ---------------------------------------------------------------------------
+
+
+def _colorize_logo():
+    """Apply a cyan-to-green gradient across the ASCII logo lines."""
+    return "\n".join(
+        f"{color}{line}{RESET}"
+        for color, line in zip(_LOGO_COLORS, _LOGO_LINES)
+    )
+
+
+def _format_box(lines, width):
+    """Render *lines* inside a Unicode rounded-corner box of *width* chars."""
+    top = f"  {DIM}╭{'─' * (width + 2)}╮{RESET}"
+    bot = f"  {DIM}╰{'─' * (width + 2)}╯{RESET}"
+    rows = []
+    for line in lines:
+        # Pad the visible text to *width*, preserving any ANSI codes.
+        visible_len = len(re.sub(r"\033\[[0-9;]*m", "", line))
+        padding = max(0, width - visible_len)
+        rows.append(f"  {DIM}│{RESET} {line}{' ' * padding} {DIM}│{RESET}")
+    return "\n".join([top, *rows, bot])
+
+
+def print_welcome():
+    """Print the full welcome screen with logo, stats, and tips."""
+    out = []
+
+    # Logo
+    out.append(_colorize_logo())
+    out.append("")
+
+    # Tagline
+    out.append(f"  {BOLD}Welcome to {BOLD_MAGENTA}Project Boss{RESET}{BOLD} v{VERSION}{RESET}")
+
+    # Dynamic stats
+    index = load_index()
+    total = len(index)
+    if total:
+        config = load_config()
+        active = sum(1 for e in index if compute_status(e, config) == "active")
+        out.append(f"  {DIM}Tracking {total} project{'s' if total != 1 else ''}"
+                   f" ({active} active){RESET}")
+    else:
+        out.append(f"  {DIM}No projects tracked yet — run {GREEN}proj new{RESET}"
+                   f"{DIM} to get started.{RESET}")
+    out.append("")
+
+    # Quick-start commands
+    out.append(f"  {BOLD}Quick Start:{RESET}")
+    cmds = [
+        ("proj new",         "Create a new project"),
+        ("proj list",        "List all tracked projects"),
+        ("proj open <name>", "Open a project directory"),
+        ("proj info <name>", "Show project details"),
+        ("proj rescan",      "Discover unindexed projects"),
+    ]
+    for cmd, desc in cmds:
+        out.append(f"    {GREEN}{cmd:<20}{RESET}{DIM}{desc}{RESET}")
+    out.append("")
+
+    # Tips box
+    box_lines = [
+        f"Run {GREEN}proj help <command>{RESET} for detailed usage.",
+        f"Use {GREEN}proj --version{RESET} to check your version.",
+    ]
+    box_width = 54
+    out.append(_format_box(box_lines, box_width))
+
+    print("\n".join(out))
 
 
 # ---------------------------------------------------------------------------
@@ -1366,7 +1463,7 @@ def main():
     args = parser.parse_args()
 
     if not args.command:
-        parser.print_help()
+        print_welcome()
         return
 
     if args.command == "help":
@@ -1374,7 +1471,7 @@ def main():
         if topic:
             parser.parse_args([topic, "--help"])
         else:
-            parser.print_help()
+            print_welcome()
         return
 
     commands = {
