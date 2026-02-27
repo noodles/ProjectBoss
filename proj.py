@@ -380,18 +380,22 @@ def print_welcome():
                    f"{DIM} to get started.{RESET}")
     out.append("")
 
-    # Quick-start commands
-    out.append(f"  {BOLD}Quick Start:{RESET}")
+    # Command reference
+    out.append(f"  {BOLD}Commands:{RESET}")
     cmds = [
-        ("proj new",         "Create a new project"),
-        ("proj list",        "List all tracked projects"),
-        ("proj open <name>", "Open a project directory"),
-        ("proj info <name>", "Show project details"),
-        ("proj idea <name>", "Capture a project idea"),
-        ("proj rescan",      "Discover unindexed projects"),
+        ("proj new",            "Create a new project"),
+        ("proj list",           "List all tracked projects"),
+        ("proj open <query>",   "Open a project directory"),
+        ("proj info <query>",   "Show project details"),
+        ("proj edit <query>",   "Edit project metadata"),
+        ("proj idea",           "Capture or list project ideas"),
+        ("proj delete <query>", "Remove a project from the index"),
+        ("proj rescan",         "Update timestamps and detect missing projects"),
+        ("proj ignore",         "Ignore folders that aren't projects"),
+        ("proj config",         "Manage configuration"),
     ]
     for cmd, desc in cmds:
-        out.append(f"    {GREEN}{cmd:<20}{RESET}{DIM}{desc}{RESET}")
+        out.append(f"    {GREEN}{cmd:<22}{RESET}{DIM}{desc}{RESET}")
     out.append("")
 
     # Tips box
@@ -1591,6 +1595,24 @@ def _idea_mark_done(ideas, idea_id):
     return False
 
 
+def _idea_delete(ideas, idea_id):
+    """Find idea by ID, confirm, remove from list, save. Returns True on success."""
+    for i, idea in enumerate(ideas):
+        if idea["id"] == idea_id:
+            emoji = _idea_category_emoji(idea.get("category", ""))
+            pname = idea.get("project_name") or "New App"
+            print(f"  {emoji}  {idea['title']}  ({pname})")
+            if prompt_confirm(f"Delete idea #{idea_id}?", default=False):
+                ideas.pop(i)
+                save_ideas(ideas)
+                print(f"  {YELLOW}Deleted.{RESET}")
+                return True
+            print("  Cancelled.")
+            return True
+    print(f"No idea found with ID '{idea_id}'.")
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Command: idea
 # ---------------------------------------------------------------------------
@@ -1615,6 +1637,11 @@ def cmd_idea(args):
     # --done mode
     if args.done:
         _idea_mark_done(ideas, args.done)
+        return
+
+    # --delete mode
+    if args.delete:
+        _idea_delete(ideas, args.delete)
         return
 
     # Capture mode — pick type first
@@ -1734,9 +1761,10 @@ def build_parser():
 
     # list
     p_list = sub.add_parser("list", aliases=["ls"], help="List projects")
-    p_list.add_argument("--status", choices=["active", "stale", "archived"])
-    p_list.add_argument("--category", "-c")
-    p_list.add_argument("--limit", "-l", type=int)
+    p_list.add_argument("--status", choices=["active", "stale", "archived"],
+                        help="Filter by status")
+    p_list.add_argument("--category", "-c", help="Filter by category")
+    p_list.add_argument("--limit", "-l", type=int, help="Max projects to show")
     p_list.add_argument("--sort", choices=["name", "last_worked_at", "created", "category"],
                         default="last_worked_at")
     p_list.add_argument("--reverse", "-r", action="store_true",
@@ -1751,11 +1779,11 @@ def build_parser():
     # edit
     p_edit = sub.add_parser("edit", help="Edit project metadata")
     p_edit.add_argument("query", help="Project ID, name, or slug")
-    p_edit.add_argument("--summary", "-s")
-    p_edit.add_argument("--category", "-c")
-    p_edit.add_argument("--name", "-n")
-    p_edit.add_argument("--archive", action="store_true")
-    p_edit.add_argument("--unarchive", action="store_true")
+    p_edit.add_argument("--summary", "-s", help="Set summary")
+    p_edit.add_argument("--category", "-c", help="Set category")
+    p_edit.add_argument("--name", "-n", help="Rename project")
+    p_edit.add_argument("--archive", action="store_true", help="Archive the project")
+    p_edit.add_argument("--unarchive", action="store_true", help="Unarchive the project")
     p_edit.add_argument("--tag", action="append", help="Add tag(s)")
     p_edit.add_argument("--untag", action="append", help="Remove tag(s)")
 
@@ -1799,6 +1827,7 @@ def build_parser():
     p_idea.add_argument("--list", "-l", dest="list_ideas", action="store_true",
                         help="List open ideas")
     p_idea.add_argument("--done", "-d", metavar="ID", help="Mark idea as done")
+    p_idea.add_argument("--delete", metavar="ID", help="Delete an idea")
     p_idea.add_argument("--quick", "-q", action="store_true",
                         help="Skip optional prompts")
 
