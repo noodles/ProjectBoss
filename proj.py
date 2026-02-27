@@ -1234,6 +1234,14 @@ def cmd_open(args):
 # ---------------------------------------------------------------------------
 
 
+_SKIP_DIRS = frozenset({
+    "node_modules", "__pycache__", ".venv", "venv", ".env", "env",
+    ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "dist", "build", ".next", ".nuxt", ".output",
+    "target", "Pods", ".dart_tool", ".pub-cache",
+})
+
+
 def _walk_latest_mtime(root):
     """Walk a project tree and return the latest file mtime. Follows symlinks."""
     latest = 0
@@ -1245,8 +1253,9 @@ def _walk_latest_mtime(root):
             dirnames.clear()
             continue
         seen_real.add(real)
-        # Skip hidden directories
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        # Skip hidden and heavy dependency/build directories
+        dirnames[:] = [d for d in dirnames
+                       if not d.startswith(".") and d not in _SKIP_DIRS]
         for fn in filenames:
             if fn.startswith("."):
                 continue
@@ -1265,12 +1274,24 @@ def cmd_rescan(args):
     entries = load_index()
     updated = 0
 
+    # Detect missing projects (directory no longer exists)
+    missing = [e for e in entries if not os.path.isdir(e.get("project_root", ""))]
+    if missing:
+        if args.prune:
+            for e in missing:
+                print(f"  PRUNED:  {e['name']} ({e.get('project_root', '')})")
+            entries = [e for e in entries if os.path.isdir(e.get("project_root", ""))]
+            print(f"Removed {len(missing)} missing project(s) from index.")
+        else:
+            print(f"Found {len(missing)} project(s) whose directories no longer exist:")
+            for e in missing:
+                print(f"  {e['id']}: {e['name']} ({e.get('project_root', '')})")
+            print("Run with --prune to remove them, or use 'proj delete <query>'.")
+
     # Update last_worked_at from filesystem mtimes
     for entry in entries:
         root = entry.get("project_root", "")
         if not os.path.isdir(root):
-            if args.verbose:
-                print(f"  MISSING: {entry['name']} ({root})")
             continue
 
         latest_mtime = _walk_latest_mtime(root)
@@ -1443,6 +1464,51 @@ def cmd_ignore(args):
         return
 
     print(f"No project or directory found for '{query}'")
+
+
+# ---------------------------------------------------------------------------
+# Command: delete
+# ---------------------------------------------------------------------------
+
+
+def cmd_delete(args):
+    cfg = load_config()
+    entries = load_index()
+
+    query = args.query
+    if not query:
+        print("Usage: proj delete <query>")
+        return
+
+    entry = find_entry(entries, query)
+    if not entry:
+        print(f"No project found for '{query}'")
+        return
+
+    root = entry.get("project_root", "")
+    dir_exists = os.path.isdir(root)
+
+    print(f"Project: {entry['name']}")
+    print(f"  ID:       {entry['id']}")
+    print(f"  Category: {entry.get('category', '?')}")
+    print(f"  Path:     {root}")
+    print(f"  On disk:  {'yes' if dir_exists else 'no (already deleted)'}")
+    print()
+
+    if args.yes or prompt_confirm(f"Remove '{entry['name']}' from the project index?", default=False):
+        entries = [e for e in entries if e["id"] != entry["id"]]
+        save_index(entries)
+        generate_projects_index(entries, cfg)
+        print(f"Removed '{entry['name']}' from the index.")
+
+        if dir_exists and not args.keep:
+            if args.yes or prompt_confirm("Also delete the project directory from disk?", default=False):
+                shutil.rmtree(root)
+                print(f"Deleted: {root}")
+            else:
+                print(f"Directory kept: {root}")
+    else:
+        print("Cancelled.")
 
 
 # ---------------------------------------------------------------------------
@@ -1705,7 +1771,17 @@ def build_parser():
     p_rescan = sub.add_parser("rescan", help="Rescan project directories")
     p_rescan.add_argument("--discover", action="store_true",
                           help="Find unindexed projects in base dirs")
+    p_rescan.add_argument("--prune", action="store_true",
+                          help="Remove projects whose directories no longer exist")
     p_rescan.add_argument("--verbose", "-v", action="store_true")
+
+    # delete
+    p_delete = sub.add_parser("delete", aliases=["rm"], help="Remove a project from the index")
+    p_delete.add_argument("query", help="Project ID, name, or slug")
+    p_delete.add_argument("--yes", "-y", action="store_true",
+                          help="Skip confirmation prompts")
+    p_delete.add_argument("--keep", "-k", action="store_true",
+                          help="Only remove from index, never delete files from disk")
 
     # ignore
     p_ignore = sub.add_parser("ignore", help="Ignore folders that aren't projects")
@@ -1763,6 +1839,8 @@ def main():
         "edit": cmd_edit,
         "open": cmd_open,
         "rescan": cmd_rescan,
+        "delete": cmd_delete,
+        "rm": cmd_delete,
         "ignore": cmd_ignore,
         "idea": cmd_idea,
     }
