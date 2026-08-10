@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -81,9 +81,10 @@ _LOGO_LINES = [
     r"|  _ \ _ __ ___ (_) ___  ___| |_  | __ )  ___  ___ ___",
     r"| |_) | '__/ _ \| |/ _ \/ __| __| |  _ \ / _ \/ __/ __|",
     "|  __/| | | (_) | |  __/ (__| |_  | |_) | (_) \\__ \\__ \\",
-    r"|_|   |_|  \___/|_|\___|\___|\__| |____/ \___/|___/___/",
+    r"|_|   |_|  \___// |\___|\___|\__| |____/ \___/|___/___/",
+    r"              |__/",
 ]
-_LOGO_COLORS = [BOLD_CYAN, BOLD_CYAN, CYAN, BOLD_GREEN, GREEN]
+_LOGO_COLORS = [BOLD_CYAN, BOLD_CYAN, CYAN, BOLD_GREEN, GREEN, GREEN]
 
 # ---------------------------------------------------------------------------
 # Helpers — filesystem / atomic writes
@@ -985,11 +986,18 @@ def cmd_new(args):
 
     # 13. Offer to cd into the new project directory
     if prompt_confirm("Change into the new project directory?", default=True):
+        # A child process cannot change the parent shell's directory, so the
+        # path is handed to the `proj` shell function via a drop file.
         try:
             with open(CD_TARGET_PATH, "w") as f:
                 f.write(project_root)
         except OSError:
             pass
+        if not os.environ.get("PROJ_SHELL_WRAPPER"):
+            print(f"\n  {YELLOW}The `proj` shell function isn't active, so the "
+                  f"directory can't be changed for you.{RESET}")
+            print(f"  Run {GREEN}bash install.sh && source ~/.zshrc{RESET} to enable it.")
+            print(f"  For now:  {GREEN}cd {project_root}{RESET}")
 
 
 # ---------------------------------------------------------------------------
@@ -1717,6 +1725,11 @@ def _idea_list(ideas, entries, project_filter=None):
             print(f"    {DIM}{idea['id']:>3}  {emoji}  {idea['title']} ({pname}){RESET}")
         if len(done_ideas) > 5:
             print(f"    {DIM}... and {len(done_ideas) - 5} more{RESET}")
+
+    # Usage hint — the ID belongs to `proj idea`, not to `proj` itself
+    if open_ideas:
+        print(f"\n  {DIM}Mark done: {GREEN}proj idea -d <id>{RESET}"
+              f"{DIM}    Delete: {GREEN}proj idea --delete <id>{RESET}")
     print()
 
 

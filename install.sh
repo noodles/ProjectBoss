@@ -43,26 +43,38 @@ if [ ! -f "$PROJ_DIR/config.json" ]; then
     python3 "$PROJ_PY" config init
 fi
 
-# 6. Add shell function to .zshrc
-MARKER="# >>> proj shell function >>>"
-if grep -q "$MARKER" "$ZSHRC" 2>/dev/null; then
-    echo "Shell function already in $ZSHRC — skipping."
+# 6. Add (or refresh) shell function in .zshrc
+START_MARKER="# >>> proj shell function >>>"
+END_MARKER="# <<< proj shell function <<<"
+if grep -q "$START_MARKER" "$ZSHRC" 2>/dev/null; then
+    echo "Refreshing shell function in $ZSHRC..."
+    cp "$ZSHRC" "$ZSHRC.proj-backup"
+    # Strip the existing block (inclusive of both markers) before re-adding it,
+    # so installs always ship the current function body.
+    awk -v s="$START_MARKER" -v e="$END_MARKER" '
+        $0 == s { skip = 1 }
+        skip != 1 { print }
+        $0 == e { skip = 0 }
+    ' "$ZSHRC.proj-backup" > "$ZSHRC"
 else
     echo "Adding shell function to $ZSHRC..."
-    cat >> "$ZSHRC" << 'SHELL_FUNC'
+fi
+
+cat >> "$ZSHRC" << 'SHELL_FUNC'
 
 # >>> proj shell function >>>
 proj() {
+    # PROJ_SHELL_WRAPPER lets proj.py know it can hand back a directory to cd into.
     if [[ "$1" == "open" && "$2" != "--help" && "$2" != "-h" ]]; then
         local target
-        target=$(command python3 ~/bin/proj.py open "${@:2}" --path-only 2>/dev/null)
+        target=$(PROJ_SHELL_WRAPPER=1 command python3 ~/bin/proj.py open "${@:2}" --path-only 2>/dev/null)
         if [[ $? -eq 0 && -n "$target" && -d "$target" ]]; then
             cd "$target" && echo "Opened: $target"
         else
-            command python3 ~/bin/proj.py open "${@:2}"
+            PROJ_SHELL_WRAPPER=1 command python3 ~/bin/proj.py open "${@:2}"
         fi
     else
-        command python3 ~/bin/proj.py "$@"
+        PROJ_SHELL_WRAPPER=1 command python3 ~/bin/proj.py "$@"
     fi
     # Handle cd-target signal from proj new
     local cd_target="$HOME/.proj/.cd_target"
@@ -77,8 +89,7 @@ proj() {
 }
 # <<< proj shell function <<<
 SHELL_FUNC
-    echo "Shell function added."
-fi
+echo "Shell function installed."
 
 echo
 echo "=== Installation complete ==="

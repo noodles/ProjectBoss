@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Fix the welcome logo rendering "Project" with the `j` looking like an `i` — the figlet descender row was missing
+- `proj idea --list` now prints a usage hint (`proj idea -d <id>` / `proj idea --delete <id>`) so the listed IDs point at the right command
+- `install.sh` now replaces an existing `proj` shell function in `~/.zshrc` instead of skipping it, so shell-side features ship on reinstall (backs up to `~/.zshrc.proj-backup`); previously the cd-on-new handler never reached existing installs
+- The shell function sets `PROJ_SHELL_WRAPPER=1`; `proj new` uses it to warn and print a `cd` command when the wrapper is missing, instead of silently doing nothing
+
 ## 0.2.0
 
 - Add `proj adr init` to scaffold an Architecture Decision Record log in a project
