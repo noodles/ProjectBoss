@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.1.9"
+VERSION = "0.2.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -394,6 +394,7 @@ def print_welcome():
         ("proj info <query>",   "Show project details"),
         ("proj edit <query>",   "Edit project metadata"),
         ("proj idea",           "Capture or list project ideas"),
+        ("proj adr init",       "Scaffold an ADR decision log"),
         ("proj reflect",        "Review ReflectFlow findings"),
         ("proj delete <query>", "Remove a project from the index"),
         ("proj rescan",         "Update timestamps and detect missing projects"),
@@ -926,7 +927,12 @@ def cmd_new(args):
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"  Warning: could not initialise git repo: {exc}")
 
-    # 9. Add to index
+    # 9. Optional ADR decision log
+    adr_ok = False
+    if args.adr:
+        adr_ok = scaffold_adr(project_root, name, quiet=True)
+
+    # 10. Add to index
     entry = {
         "id": entry_id,
         "name": name,
@@ -944,7 +950,7 @@ def cmd_new(args):
     entries.append(entry)
     save_index(entries)
 
-    # 10. Regenerate PROJECTS_INDEX.md
+    # 11. Regenerate PROJECTS_INDEX.md
     generate_projects_index(entries, cfg)
 
     print(f"\nCreated project: {name}")
@@ -955,8 +961,11 @@ def cmd_new(args):
         print(f"  Summary:  {summary}")
     if git_ok:
         print(f"  Git:      initialised")
+    if adr_ok:
+        adr_new_cmd, _ = _adr_commands(project_root)
+        print(f"  ADR log:  docs/adr/ — add a record with `{adr_new_cmd}`")
 
-    # 11. Offer to open in editor(s)
+    # 12. Offer to open in editor(s)
     if not args.no_notes:
         project_editor = cfg.get("project_editor", "Zed")
         prompt_editor = cfg.get("prompt_editor", "Typora")
@@ -974,7 +983,7 @@ def cmd_new(args):
             open_in_app(project_editor, project_root)
             open_in_app(prompt_editor, initial_prompt_path)
 
-    # 12. Offer to cd into the new project directory
+    # 13. Offer to cd into the new project directory
     if prompt_confirm("Change into the new project directory?", default=True):
         try:
             with open(CD_TARGET_PATH, "w") as f:
@@ -2114,6 +2123,399 @@ def cmd_reflect(args):
 
 
 # ---------------------------------------------------------------------------
+# Command: adr — scaffold an Architecture Decision Record log
+# ---------------------------------------------------------------------------
+
+LOG4BRAINS_VERSION = "1.1.0"
+
+ADR_TEMPLATE_MD = """\
+# [short title of the decision — a noun phrase, e.g. "Trunk-based deploy via GitHub Actions"]
+
+- Status: [draft | proposed | accepted | rejected | deprecated | superseded by [YYYYMMDD-xxx](yyyymmdd-xxx.md)]
+- Deciders: [who made the call]
+- Date: [YYYY-MM-DD when the decision was made or last updated]
+- Tags: [space/comma separated — e.g. deploy, data, styling, payments, infra]
+
+<!--
+AGENT GUIDANCE — read before writing an ADR here:
+- One decision per file. Two choices = two ADRs.
+- ADRs are IMMUTABLE. Never rewrite an accepted one to reflect a new decision.
+  Instead: create a new ADR and set this one's Status to "superseded by [link]",
+  and the new one's Status to "accepted" with a "Supersedes [link]" in Links.
+- Record the REJECTED options too (## Considered Options). The "why not" is the most
+  valuable part for the next reader.
+- Ground every claim in evidence: a commit SHA, a file:line, a release tag, or a doc.
+  Do not invent rationale. If the "why" isn't recorded anywhere, say so.
+- To create one, run `{{new_cmd}}` (auto-dates and numbers the file).
+- Verify the decision actually shipped before recording it as accepted.
+-->
+
+## Context and Problem Statement
+
+[Two or three sentences. What forced a decision? What was breaking, or what did we need?]
+
+## Considered Options
+
+- [option 1]
+- [option 2]
+- [option 3]
+
+## Decision Outcome
+
+Chosen option: "[option 1]", because [justification]. [Cite the commit / file:line / tag that
+implements it, or mark it not-yet-shipped.]
+
+### Consequences
+
+- Good: [what this bought us]
+- Bad / accepted trade-off: [what it cost, what we knowingly gave up]
+
+## Pros and Cons of the Options <!-- optional -->
+
+### [option 2]
+
+- Good, because [...]
+- Bad, because [why it was rejected]
+
+## Links <!-- optional -->
+
+- Supersedes [YYYYMMDD-xxx](yyyymmdd-xxx.md)
+- Superseded by [YYYYMMDD-xxx](yyyymmdd-xxx.md)
+- Related to [YYYYMMDD-xxx](yyyymmdd-xxx.md)
+"""
+
+ADR_README_MD = """\
+# Architecture Decision Records
+
+This is the decision log for **{{name}}**. Each file records one architecturally-significant
+decision: the context, the options weighed, the choice, and its consequences.
+
+## Creating and browsing
+
+```bash
+{{new_cmd}}       # create a new ADR (auto-dated + auto-numbered filename)
+{{serve_cmd}}     # build the static site and serve it locally
+```
+
+These run [log4brains](https://github.com/thomvaill/log4brains) via `npx` (pinned to
+{{l4b_version}}), so **nothing is added to this project's dependency tree**. Node is only needed
+for browsing and for the auto-numbered filename — the records themselves are plain markdown you
+can write by hand.
+
+## The rules
+
+- **One decision per file.** Two choices means two ADRs.
+- **ADRs are immutable.** Never edit an accepted ADR to change the decision. Create a new one,
+  set the old one's `Status:` to `superseded by [link]`, and add `Supersedes [link]` to the new
+  one's `## Links`. Flipping the status and adding that link is the only edit an accepted ADR
+  should ever get.
+- **Record the rejected options and why.** The "why not" is the most valuable part.
+- A decision that is **decided but not yet shipped** is a valid ADR — set `Status: proposed`.
+
+See `template.md` for the full format.
+
+## More information
+
+- [Log4brains documentation](https://github.com/thomvaill/log4brains/tree/develop#readme)
+- [ADR GitHub organization](https://adr.github.io/)
+
+<!-- Scaffolded by `proj adr init`. -->
+"""
+
+ADR_INDEX_MD = """\
+<!-- This file is the homepage of the Log4brains knowledge base. Edit freely. -->
+
+# {{name}} — Architecture knowledge base
+
+Welcome 👋 to the architecture decision log for **{{name}}**.
+
+You'll find here the Architecture Decision Records (ADRs) that got this project to where it is
+now — the reasoning behind the choices, including the ones that were reversed.
+
+## Why this exists
+
+An ADR captures one architecturally-significant decision: the context, the options weighed, the
+choice, and its consequences. An ADR is **immutable** — once accepted you don't rewrite it, you
+supersede it with a new one and link the two. Read the log in date order and you get the whole
+story, including the reversals.
+
+## How this is kept up to date
+
+The ADRs are markdown files in `docs/adr/`, managed next to the code. Create one with
+`{{new_cmd}}` and browse this knowledge base with `{{serve_cmd}}`.
+
+Browse via the left menu or the search bar.
+
+## More information
+
+- [What is an ADR and why use them](https://github.com/thomvaill/log4brains/tree/develop#-what-is-an-adr-and-why-should-you-use-them)
+- [ADR GitHub organization](https://adr.github.io/)
+"""
+
+ADR_SKILL_MD = """\
+---
+name: adr
+description: Record or supersede an Architecture Decision Record (ADR) for {{name}}. Use whenever a significant, durable architectural decision is made, changed, or reversed.
+---
+
+# adr
+
+The {{name}} decision log lives in `docs/adr/`. It is the project's memory of **why** things are
+the way they are. Before changing anything architectural, read the relevant ADRs first — they
+exist to stop a settled decision being silently re-litigated or reversed.
+
+## When to invoke
+
+When the user types `/adr`, or asks to "record a decision", "write an ADR", or "supersede an
+ADR" — and whenever you (an agent) make an architecturally-significant, durable choice worth
+recording.
+
+## When to write one
+
+Write an ADR when a choice is **architecturally significant and durable** — it constrains future
+work, or a newcomer would otherwise re-argue it. Examples: the deploy model, the state/data/
+styling standard, an auth or payments decision, a build-tooling choice, a reversal of a previous
+approach. Do NOT write one for a routine feature or a bugfix.
+
+Keep it scoped to **this repository**. Decisions belonging to another repo belong in that repo's
+log.
+
+## How to create one
+
+```bash
+{{new_cmd}}       # prompts for a title, then creates docs/adr/YYYYMMDD-slug.md
+{{serve_cmd}}     # build + serve the knowledge base locally
+```
+
+These run log4brains via `npx` (pinned), so nothing is added to the project's dependency tree.
+
+Fill in the MADR sections (see `docs/adr/template.md`): Context and Problem Statement, Considered
+Options, Decision Outcome (start with `Chosen option: "..."`), Consequences.
+
+- **Record the rejected options and why** — the "why not" is the most valuable part.
+- **Ground every claim** in a commit SHA, `file:line`, a release tag, or a doc. Never invent
+  rationale.
+- **Verify it actually shipped** before recording it as `accepted`.
+
+## Rules that must not be broken
+
+- **One decision per ADR.** Two choices → two files.
+- **ADRs are immutable.** Never rewrite an accepted ADR to reflect a new decision. Instead:
+  1. Create a new ADR for the new decision (status `accepted`).
+  2. In the new ADR's `## Links`, add `Supersedes [YYYYMMDD-old](YYYYMMDD-old.md)`.
+  3. In the OLD ADR, change `Status:` to `superseded by [YYYYMMDD-new](YYYYMMDD-new.md)`.
+  This is the ONLY edit you may make to an accepted ADR — flipping its status and adding the link.
+- A decision that was **decided but not yet shipped** is a valid ADR — set `Status: proposed`.
+"""
+
+ADR_LOG4BRAINS_YML = """\
+project:
+  name: {{name}}
+  tz: {{tz}}
+  adrFolder: ./docs/adr
+  packages: []
+"""
+
+
+def _render(template, **values):
+    """Substitute {{key}} placeholders. Used instead of str.format so that
+    markdown braces in the templates are never interpreted."""
+    out = template
+    for key, val in values.items():
+        out = out.replace("{{" + key + "}}", str(val))
+    return out
+
+
+def _detect_timezone():
+    """Best-effort IANA timezone name (e.g. Australia/Sydney)."""
+    try:
+        path = os.path.realpath("/etc/localtime")
+    except OSError:
+        return "UTC"
+    if "/zoneinfo/" in path:
+        return path.split("/zoneinfo/", 1)[1]
+    return "UTC"
+
+
+def _detect_pkg_runner(project_root):
+    """Return the script runner prefix for this project's lockfile, or None
+    when the project has no package.json to hang scripts off."""
+    if not os.path.isfile(os.path.join(project_root, "package.json")):
+        return None
+    if os.path.isfile(os.path.join(project_root, "pnpm-lock.yaml")):
+        return "pnpm"
+    if os.path.isfile(os.path.join(project_root, "yarn.lock")):
+        return "yarn"
+    return "npm run"
+
+
+def _adr_commands(project_root):
+    """Return (new_cmd, serve_cmd) — package scripts when the project has a
+    package.json, raw pinned npx invocations otherwise."""
+    runner = _detect_pkg_runner(project_root)
+    if runner:
+        return f"{runner} adr:new", f"{runner} adr:serve"
+    npx = f"npx --yes log4brains@{LOG4BRAINS_VERSION}"
+    return f"{npx} adr new", f"{npx} build && npx --yes serve .log4brains/out"
+
+
+def _adr_write(path, content, force):
+    """Write a scaffold file. Returns 'created', 'overwritten', or 'skipped'."""
+    exists = os.path.exists(path)
+    if exists and not force:
+        return "skipped"
+    ensure_dir(os.path.dirname(path))
+    with open(path, "w") as f:
+        f.write(content)
+    return "overwritten" if exists else "created"
+
+
+def _adr_add_gitignore(project_root):
+    """Ensure /.log4brains is ignored. Returns 'created', 'appended', or 'skipped'."""
+    path = os.path.join(project_root, ".gitignore")
+    entry = "/.log4brains"
+    existing = ""
+    if os.path.isfile(path):
+        try:
+            with open(path) as f:
+                existing = f.read()
+        except OSError:
+            return "skipped"
+        if any(line.strip() == entry for line in existing.splitlines()):
+            return "skipped"
+    block = "# log4brains ADR knowledge-base build output (docs/adr)\n" + entry + "\n"
+    if existing and not existing.endswith("\n"):
+        block = "\n" + block
+    elif existing:
+        block = "\n" + block
+    try:
+        with open(path, "a") as f:
+            f.write(block)
+    except OSError:
+        return "skipped"
+    return "appended" if existing else "created"
+
+
+def _adr_add_pkg_scripts(project_root):
+    """Merge the adr:* scripts into package.json. Returns a list of added script
+    names, or None when there is no package.json to merge into."""
+    path = os.path.join(project_root, "package.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            pkg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    npx = f"npx --yes log4brains@{LOG4BRAINS_VERSION}"
+    wanted = {
+        "adr:new": f"{npx} adr new",
+        "adr:preview": f"{npx} preview",
+        "adr:build": f"{npx} build",
+        "adr:serve": f"{npx} build && npx --yes serve .log4brains/out",
+    }
+    scripts = pkg.setdefault("scripts", {})
+    added = [k for k, v in wanted.items() if k not in scripts]
+    if not added:
+        return []
+    for key in added:
+        scripts[key] = wanted[key]
+    atomic_write_json(path, pkg)
+    return added
+
+
+def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False):
+    """Create the ADR log scaffold in project_root. Returns True on success."""
+    if not os.path.isdir(project_root):
+        print(f"Project directory does not exist: {project_root}")
+        return False
+
+    adr_dir = os.path.join(project_root, "docs", "adr")
+    new_cmd, serve_cmd = _adr_commands(project_root)
+    subs = {
+        "name": name,
+        "tz": _detect_timezone(),
+        "new_cmd": new_cmd,
+        "serve_cmd": serve_cmd,
+        "l4b_version": LOG4BRAINS_VERSION,
+    }
+
+    files = [
+        (os.path.join(adr_dir, "template.md"), ADR_TEMPLATE_MD),
+        (os.path.join(adr_dir, "README.md"), ADR_README_MD),
+        (os.path.join(adr_dir, "index.md"), ADR_INDEX_MD),
+        (os.path.join(project_root, ".log4brains.yml"), ADR_LOG4BRAINS_YML),
+    ]
+    if with_skill:
+        files.append(
+            (os.path.join(project_root, ".claude", "skills", "adr", "SKILL.md"), ADR_SKILL_MD)
+        )
+
+    results = []
+    for path, template in files:
+        outcome = _adr_write(path, _render(template, **subs), force)
+        results.append((os.path.relpath(path, project_root), outcome))
+
+    gitignore = _adr_add_gitignore(project_root)
+    scripts_added = _adr_add_pkg_scripts(project_root)
+
+    if quiet:
+        return True
+
+    print(f"\n{BOLD}ADR log scaffolded:{RESET} {project_root}")
+    for rel, outcome in results:
+        if outcome == "skipped":
+            print(f"  {DIM}skipped   {rel} (already exists){RESET}")
+        else:
+            print(f"  {GREEN}{outcome:<9}{RESET} {rel}")
+    if gitignore != "skipped":
+        print(f"  {GREEN}{gitignore:<9}{RESET} .gitignore (/.log4brains)")
+    if scripts_added:
+        print(f"  {GREEN}added     {RESET} package.json scripts: {', '.join(scripts_added)}")
+
+    if any(o == "skipped" for _, o in results) and not force:
+        print(f"\n  {DIM}Re-run with --force to overwrite existing files.{RESET}")
+
+    print(f"\n  Create a record:  {CYAN}{new_cmd}{RESET}")
+    print(f"  Browse the log:   {CYAN}{serve_cmd}{RESET}")
+    if scripts_added is None:
+        print(f"  {DIM}No package.json found — the commands above run log4brains directly.{RESET}")
+    return True
+
+
+def cmd_adr(args):
+    entries = load_index()
+
+    entry = None
+    if args.query:
+        entry = find_entry(entries, args.query)
+        if not entry:
+            print(f"No project found for '{args.query}'")
+            return
+    else:
+        # Fall back to whichever indexed project contains the working directory.
+        cwd = os.path.realpath(os.getcwd())
+        for e in entries:
+            root = e.get("project_root", "")
+            if not root:
+                continue
+            root = os.path.realpath(os.path.expanduser(root))
+            if cwd == root or cwd.startswith(root + os.sep):
+                entry = e
+                break
+        if not entry:
+            print("Not inside a tracked project. Pass a project: proj adr init <id|name>")
+            return
+
+    scaffold_adr(
+        os.path.expanduser(entry["project_root"]),
+        entry["name"],
+        force=args.force,
+        with_skill=not args.no_skill,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Argparse setup
 # ---------------------------------------------------------------------------
 
@@ -2140,6 +2542,8 @@ def build_parser():
     p_new.add_argument("--summary", "-s", help="One-line summary")
     p_new.add_argument("--base", "-b", help="Base directory name")
     p_new.add_argument("--no-notes", action="store_true", help="Skip prompts (non-interactive)")
+    p_new.add_argument("--adr", action="store_true",
+                       help="Scaffold an ADR decision log in docs/adr/")
 
     # list
     p_list = sub.add_parser("list", aliases=["ls"], help="List projects")
@@ -2217,6 +2621,17 @@ def build_parser():
     p_idea.add_argument("--quick", "-q", action="store_true",
                         help="Skip optional prompts")
 
+    # adr
+    p_adr = sub.add_parser("adr", help="Scaffold an ADR decision log in a project")
+    p_adr.add_argument("action", nargs="?", choices=["init"], default="init",
+                       help="ADR action (only 'init' for now)")
+    p_adr.add_argument("query", nargs="?",
+                       help="Project ID, name, or slug (defaults to the current directory)")
+    p_adr.add_argument("--force", "-f", action="store_true",
+                       help="Overwrite scaffold files that already exist")
+    p_adr.add_argument("--no-skill", dest="no_skill", action="store_true",
+                       help="Don't write .claude/skills/adr/SKILL.md")
+
     # reflect
     p_reflect = sub.add_parser("reflect", help="Review ReflectFlow findings")
     p_reflect.add_argument("--list", "-l", dest="list_findings", action="store_true",
@@ -2265,6 +2680,7 @@ def main():
         "rm": cmd_delete,
         "ignore": cmd_ignore,
         "idea": cmd_idea,
+        "adr": cmd_adr,
         "reflect": cmd_reflect,
     }
 

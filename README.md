@@ -25,6 +25,7 @@ Create a new project interactively or with flags.
 ```bash
 proj new                              # interactive
 proj new --name "My Project" -c Noodle -s "A cool thing" --no-notes
+proj new --adr                        # also scaffold an ADR decision log
 ```
 
 Creates: `{base}/{category}/{slug}/docs/` with initial prompt and README.
@@ -96,6 +97,38 @@ proj ignore ~/Documents/01_Projects/NVE/docs   # ignore by path
 proj ignore --list                    # show all ignored paths
 proj ignore --remove docs             # un-ignore (substring match)
 ```
+
+### `proj adr init`
+
+Scaffold an Architecture Decision Record log in a project — a durable record of *why* things are
+the way they are, in [MADR](https://adr.github.io/) format, browsable as a searchable site via
+[log4brains](https://github.com/thomvaill/log4brains).
+
+```bash
+proj adr init                         # scaffold in the project containing the current directory
+proj adr init 3                       # scaffold by ID, name, or slug
+proj adr init 3 --force               # overwrite existing scaffold files
+proj adr init 3 --no-skill            # skip the .claude/skills/adr/SKILL.md agent skill
+proj new --adr                        # scaffold at project creation time
+```
+
+Creates:
+
+```
+docs/adr/template.md          MADR template with agent guidance
+docs/adr/README.md            how to browse, and the immutability rules
+docs/adr/index.md             knowledge-base homepage
+.log4brains.yml               project name, timezone, adrFolder
+.claude/skills/adr/SKILL.md   Claude Code skill so agents read and write the log
+.gitignore                    appends /.log4brains (build output)
+```
+
+If the project has a `package.json`, the `adr:new` / `adr:preview` / `adr:build` / `adr:serve`
+scripts are merged into it, using the runner matching its lockfile (pnpm, yarn, or npm). Projects
+without one get the pinned `npx` invocations directly in the generated docs — log4brains needs
+only `.log4brains.yml` and `docs/adr/template.md`, not a Node project.
+
+Re-running skips files that already exist, so it's safe on a project that already has a log.
 
 ### `proj help`
 

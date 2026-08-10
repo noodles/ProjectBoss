@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Add `proj adr init` to scaffold an Architecture Decision Record log in a project
+- Scaffolds `docs/adr/` (template, README, knowledge-base index), `.log4brains.yml`, a `/.log4brains` gitignore entry, and a `.claude/skills/adr/SKILL.md` agent skill
+- Merges `adr:new` / `adr:preview` / `adr:build` / `adr:serve` scripts into `package.json` when the project has one; otherwise the generated docs use pinned `npx` invocations directly (log4brains needs no Node project, only `.log4brains.yml` + `template.md`)
+- Detects the script runner from the lockfile (pnpm / yarn / npm) and the IANA timezone from `/etc/localtime`
+- Resolves the target project from a query, or from the current directory when none is given
+- `--force` overwrites existing scaffold files; `--no-skill` skips the agent skill
+- Add `proj new --adr` to scaffold the log at project creation time
+
 ## 0.1.9
 
 - Add `proj reflect` command for interactive review of ReflectFlow findings

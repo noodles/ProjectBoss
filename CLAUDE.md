@@ -27,7 +27,7 @@ There is no build step, no test suite, no linter configured.
 2. **Helpers** — filesystem utils (`atomic_write_json`), text processing (`slugify`), status computation, frontmatter parsing, interactive prompts (`read_key`, `prompt_text`, `prompt_choice`), table formatting, date utils, git integration
 3. **Data layer** — `load_config()`/`save_config()`, `load_index()`/`save_index()`, `load_ignored()`/`save_ignored()`, `find_entry()` for query resolution
 4. **Template generation** — `generate_projects_index()`, `create_initial_prompt()`, `create_readme()`
-5. **Command handlers** — `cmd_config`, `cmd_new`, `cmd_list`, `cmd_info`, `cmd_edit`, `cmd_open`, `cmd_rescan`, `cmd_ignore`, `cmd_help`
+5. **Command handlers** — `cmd_config`, `cmd_new`, `cmd_list`, `cmd_info`, `cmd_edit`, `cmd_open`, `cmd_rescan`, `cmd_delete`, `cmd_ignore`, `cmd_idea`, `cmd_adr`, `cmd_reflect`, `cmd_help`
 6. **CLI parser** — `build_parser()` using argparse with subparsers
 7. **Main** — dispatch via command-name-to-function dictionary
 
