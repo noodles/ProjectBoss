@@ -24,6 +24,7 @@ CONFIG_PATH = os.path.join(PROJ_DIR, "config.json")
 INDEX_PATH = os.path.join(PROJ_DIR, "index.json")
 IGNORED_PATH = os.path.join(PROJ_DIR, "ignored.json")
 IDEAS_PATH = os.path.join(PROJ_DIR, "ideas.json")
+CD_TARGET_PATH = os.path.join(PROJ_DIR, ".cd_target")
 
 IDEA_CATEGORIES = [
     ("bug",           "🐛", "Bug",           "errors, unexpected behavior"),
@@ -59,7 +60,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.1.4"
+VERSION = "0.1.9"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -109,7 +110,11 @@ def atomic_write_json(path, data):
 
 def slugify(name):
     """Turn a project name into a filesystem-safe slug."""
-    s = name.lower().strip()
+    s = name.strip()
+    # Insert hyphens at camelCase boundaries (e.g. "CalendarSync" → "Calendar-Sync")
+    s = re.sub(r"([a-z])([A-Z])", r"\1-\2", s)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", s)
+    s = s.lower()
     s = re.sub(r"[^\w\s-]", "", s)
     s = re.sub(r"[\s_-]+", "-", s)
     return s.strip("-")
@@ -389,6 +394,7 @@ def print_welcome():
         ("proj info <query>",   "Show project details"),
         ("proj edit <query>",   "Edit project metadata"),
         ("proj idea",           "Capture or list project ideas"),
+        ("proj reflect",        "Review ReflectFlow findings"),
         ("proj delete <query>", "Remove a project from the index"),
         ("proj rescan",         "Update timestamps and detect missing projects"),
         ("proj ignore",         "Ignore folders that aren't projects"),
@@ -968,6 +974,14 @@ def cmd_new(args):
             open_in_app(project_editor, project_root)
             open_in_app(prompt_editor, initial_prompt_path)
 
+    # 12. Offer to cd into the new project directory
+    if prompt_confirm("Change into the new project directory?", default=True):
+        try:
+            with open(CD_TARGET_PATH, "w") as f:
+                f.write(project_root)
+        except OSError:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Command: list
@@ -1273,6 +1287,38 @@ def _walk_latest_mtime(root):
     return latest
 
 
+def _rename_project_dir(entry, new_dir_name):
+    """Rename a project directory and update all index paths.
+
+    Handles case-only renames on case-insensitive filesystems (macOS).
+    Returns True on success, False if target already exists.
+    """
+    root = entry["project_root"]
+    parent = os.path.dirname(root)
+    new_root = os.path.join(parent, new_dir_name)
+
+    if os.path.exists(new_root):
+        try:
+            if os.path.samefile(root, new_root):
+                # Case-only rename — two-step via temp name
+                tmp = new_root + "_reslug_tmp"
+                os.rename(root, tmp)
+                os.rename(tmp, new_root)
+            else:
+                return False
+        except OSError:
+            return False
+    else:
+        os.rename(root, new_root)
+
+    # Update all paths in the entry
+    for key in ("project_root", "docs_path", "initial_prompt_path"):
+        val = entry.get(key, "")
+        if val.startswith(root):
+            entry[key] = new_root + val[len(root):]
+    return True
+
+
 def cmd_rescan(args):
     cfg = load_config()
     entries = load_index()
@@ -1291,6 +1337,92 @@ def cmd_rescan(args):
             for e in missing:
                 print(f"  {e['id']}: {e['name']} ({e.get('project_root', '')})")
             print("Run with --prune to remove them, or use 'proj delete <query>'.")
+
+    # Reslug: rename project directories to match current slugify rules
+    if args.reslug:
+        reslug_count = 0
+        reslug_skipped = 0
+        for entry in entries:
+            root = entry.get("project_root", "")
+            if not os.path.isdir(root):
+                continue
+            old_dir_name = os.path.basename(root)
+            new_dir_name = slugify(entry["name"])
+            if old_dir_name == new_dir_name:
+                continue
+            if _rename_project_dir(entry, new_dir_name):
+                print(f"  RENAME:  {old_dir_name} → {new_dir_name}")
+                reslug_count += 1
+            else:
+                print(f"  SKIP:    {entry['name']} — target already exists")
+                reslug_skipped += 1
+        if reslug_count or reslug_skipped:
+            print(f"Reslugged {reslug_count} project(s).")
+            if reslug_skipped:
+                print(f"Skipped {reslug_skipped} (target directory already exists).")
+        else:
+            print("All project directories already match current slug rules.")
+
+    # Reslug check: interactive review of each project directory name
+    if args.reslug_check:
+        print("Reslug check — review each project directory name.")
+        print("Enter=accept proposed, type a custom slug, or s=skip.\n")
+        renames = []
+        n = 0
+        for entry in entries:
+            root = entry.get("project_root", "")
+            if not os.path.isdir(root):
+                continue
+            n += 1
+            old_dir = os.path.basename(root)
+            proposed = slugify(entry["name"])
+            same = old_dir == proposed
+
+            print(f"  [{n}] {entry['name']}")
+            print(f"       Current:  {old_dir}")
+            if same:
+                print(f"       Proposed: {proposed} (no change)")
+                hint = "keep"
+            else:
+                print(f"       Proposed: {proposed}")
+                hint = "accept"
+
+            response = input(f"       New slug [Enter={hint}, s=skip]: ").strip()
+
+            if response.lower() == "s" or (not response and same):
+                print()
+                continue
+
+            new_slug = response if response else proposed
+
+            if new_slug == old_dir:
+                print()
+                continue
+
+            renames.append((entry, old_dir, new_slug))
+            print(f"       → {old_dir} → {new_slug}")
+            print()
+
+        if not renames:
+            print("No changes to make.")
+        else:
+            print(f"\n{len(renames)} rename(s) queued:")
+            for _, old, new in renames:
+                print(f"  {old} → {new}")
+            if prompt_confirm("\nApply all renames?", default=True):
+                applied = 0
+                for entry, old_dir, new_dir in renames:
+                    if _rename_project_dir(entry, new_dir):
+                        print(f"  RENAMED: {old_dir} → {new_dir}")
+                        applied += 1
+                    else:
+                        print(f"  FAILED:  {old_dir} → {new_dir} (target exists)")
+                save_index(entries)
+                generate_projects_index(entries, cfg)
+                print(f"Applied {applied} rename(s).")
+            else:
+                print("Cancelled.")
+        return
 
     # Update last_worked_at from filesystem mtimes
     for entry in entries:
@@ -1732,6 +1864,256 @@ def cmd_idea(args):
 
 
 # ---------------------------------------------------------------------------
+# Command: reflect
+# ---------------------------------------------------------------------------
+
+REFLECTFLOW_STAGING = os.path.expanduser("~/.claude/reflectflow/staging")
+REFLECTFLOW_ARCHIVE = os.path.expanduser("~/.claude/reflectflow/archive")
+
+_REFLECT_TYPE_MAP = {
+    "quick-scan": "Quick Scan",
+    "feature-review": "Feature Review",
+    "weekly-retro": "Weekly Retro",
+    "decisions": "Decisions",
+    "doc-update": "Doc Update",
+}
+
+
+def _reflect_finding_type(filename):
+    """Derive finding type from filename prefix."""
+    for prefix, label in _REFLECT_TYPE_MAP.items():
+        if filename.startswith(prefix):
+            return label
+    return "Finding"
+
+
+def _reflect_is_error(filepath):
+    """Check if a finding file is just an error message."""
+    try:
+        size = os.path.getsize(filepath)
+        if size >= 100:
+            return False
+        with open(filepath) as f:
+            content = f.read()
+        return "Error: Exceeded" in content
+    except OSError:
+        return False
+
+
+def _reflect_archive(filepath):
+    """Move a finding file to the archive directory."""
+    ensure_dir(REFLECTFLOW_ARCHIVE)
+    dest = os.path.join(REFLECTFLOW_ARCHIVE, os.path.basename(filepath))
+    shutil.move(filepath, dest)
+
+
+def _reflect_list_findings():
+    """Return list of (filepath, filename, type_label) for pending findings."""
+    if not os.path.isdir(REFLECTFLOW_STAGING):
+        return []
+    findings = []
+    for name in sorted(os.listdir(REFLECTFLOW_STAGING)):
+        if name.startswith(".") or not name.endswith(".md"):
+            continue
+        filepath = os.path.join(REFLECTFLOW_STAGING, name)
+        if not os.path.isfile(filepath):
+            continue
+        findings.append((filepath, name, _reflect_finding_type(name)))
+    return findings
+
+
+def _reflect_dismiss_errors(findings):
+    """Auto-archive error-only findings, return remaining findings."""
+    errors = set()
+    for f in findings:
+        if _reflect_is_error(f[0]):
+            errors.add(f[0])
+    if errors:
+        print(f"Found {len(errors)} error-only finding{'s' if len(errors) != 1 else ''}"
+              f" — auto-dismissing.")
+        for filepath in errors:
+            _reflect_archive(filepath)
+    return [f for f in findings if f[0] not in errors]
+
+
+def _reflect_show_summary(findings):
+    """Print count summary by type."""
+    counts = {}
+    for _, _, type_label in findings:
+        counts[type_label] = counts.get(type_label, 0) + 1
+    parts = ", ".join(f"{v} {k.lower()}{'s' if v != 1 else ''}" for k, v in counts.items())
+    total = len(findings)
+    print(f"\n{BOLD}{total} pending finding{'s' if total != 1 else ''}{RESET}"
+          f" ({parts})")
+
+
+def _reflect_apply(filepath, content):
+    """Handle the Apply action — route finding to a destination."""
+    destinations = [
+        "Global rule (~/.claude/rules/)",
+        "Project rule (.claude/rules/)",
+        "Project CLAUDE.md",
+        "Memory (~/.claude/projects/.../memory/)",
+        "Manual (just print the path suggestion)",
+    ]
+    dest = prompt_choice("Route to", destinations)
+
+    if dest.startswith("Manual"):
+        print(f"\n  {DIM}Suggested locations:{RESET}")
+        print(f"    Global rule:  ~/.claude/rules/<name>.md")
+        print(f"    Project rule: .claude/rules/<name>.md")
+        print(f"    CLAUDE.md:    append to project CLAUDE.md")
+        _reflect_archive(filepath)
+        print(f"  {GREEN}Archived.{RESET} Apply the content manually.")
+        return
+
+    # Determine target directory and prompt for filename
+    if dest.startswith("Global"):
+        target_dir = os.path.expanduser("~/.claude/rules")
+    elif dest.startswith("Project rule"):
+        target_dir = os.path.join(os.getcwd(), ".claude", "rules")
+    elif dest.startswith("Project CLAUDE"):
+        target_path = os.path.join(os.getcwd(), "CLAUDE.md")
+        ensure_dir(os.path.dirname(target_path))
+        mode = "a" if os.path.exists(target_path) else "w"
+        with open(target_path, mode) as f:
+            if mode == "a":
+                f.write("\n\n")
+            f.write(content)
+        _reflect_archive(filepath)
+        print(f"  {GREEN}Appended to {target_path} and archived.{RESET}")
+        return
+    elif dest.startswith("Memory"):
+        target_dir = os.path.expanduser("~/.claude/projects")
+        # Find the first memory directory that exists
+        print(f"\n  {DIM}Memory directories are project-specific.")
+        print(f"  Copy the content to the appropriate memory file manually.{RESET}")
+        _reflect_archive(filepath)
+        print(f"  {GREEN}Archived.{RESET} Apply the content manually.")
+        return
+    else:
+        target_dir = os.path.expanduser("~/.claude/rules")
+
+    # Suggest a filename based on the finding file
+    basename = os.path.splitext(os.path.basename(filepath))[0]
+    # Strip timestamp portion to get a cleaner suggestion
+    suggested = re.sub(r"-\d{4}-\d{2}-\d{2}.*$", "", basename)
+    suggested = re.sub(r"-\d{10,}$", "", suggested)
+    if not suggested:
+        suggested = basename
+    suggested = suggested + ".md"
+
+    filename = prompt_text("Filename", default=suggested)
+    if not filename:
+        print("  Cancelled.")
+        return
+    if not filename.endswith(".md"):
+        filename += ".md"
+
+    ensure_dir(target_dir)
+    target_path = os.path.join(target_dir, filename)
+    mode = "a" if os.path.exists(target_path) else "w"
+    with open(target_path, mode) as f:
+        if mode == "a":
+            f.write("\n\n")
+        f.write(content)
+    _reflect_archive(filepath)
+    print(f"  {GREEN}Written to {target_path} and archived.{RESET}")
+
+
+def cmd_reflect(args):
+    """Interactive review of ReflectFlow findings."""
+    findings = _reflect_list_findings()
+
+    if not findings:
+        print("No pending ReflectFlow findings.")
+        return
+
+    # --list: non-interactive listing
+    if getattr(args, "list_findings", False):
+        _reflect_show_summary(findings)
+        error_count = sum(1 for f in findings if _reflect_is_error(f[0]))
+        if error_count:
+            print(f"  {DIM}({error_count} are error-only — use --dismiss-errors to clean up){RESET}")
+        print()
+        for filepath, name, type_label in findings:
+            is_err = _reflect_is_error(filepath)
+            marker = f" {DIM}(error){RESET}" if is_err else ""
+            print(f"  {CYAN}{type_label:<16}{RESET} {name}{marker}")
+        return
+
+    # --dismiss-errors: bulk dismiss errors only
+    if getattr(args, "dismiss_errors", False):
+        remaining = _reflect_dismiss_errors(findings)
+        errcount = len(findings) - len(remaining)
+        if errcount == 0:
+            print("No error-only findings found.")
+        else:
+            print(f"Done. {len(remaining)} finding{'s' if len(remaining) != 1 else ''} remaining.")
+        return
+
+    # Interactive review
+    # First auto-dismiss errors
+    findings = _reflect_dismiss_errors(findings)
+
+    if not findings:
+        print("No findings to review after dismissing errors.")
+        return
+
+    _reflect_show_summary(findings)
+
+    applied = 0
+    dismissed = 0
+    skipped = 0
+
+    for filepath, name, type_label in findings:
+        print(f"\n{'─' * 60}")
+        print(f"  {BOLD}{type_label}{RESET}  {DIM}{name}{RESET}")
+        print(f"{'─' * 60}")
+
+        with open(filepath) as f:
+            content = f.read()
+        lines = content.splitlines()
+        total_lines = len(lines)
+        truncated = total_lines > 40
+
+        if truncated:
+            display = "\n".join(lines[:40])
+            print(display)
+            print(f"\n  {DIM}... truncated, showing 40/{total_lines} lines{RESET}")
+        else:
+            print(content)
+
+        while True:
+            action = prompt_choice("Action", ["Apply", "Dismiss", "Skip", "Show full"])
+
+            if action == "Show full":
+                if truncated:
+                    print(f"\n{'─' * 40}")
+                    print(content)
+                    print(f"{'─' * 40}")
+                else:
+                    print(f"  {DIM}(already showing full content){RESET}")
+                continue
+
+            if action == "Apply":
+                _reflect_apply(filepath, content)
+                applied += 1
+            elif action == "Dismiss":
+                _reflect_archive(filepath)
+                print(f"  {DIM}Archived.{RESET}")
+                dismissed += 1
+            else:  # Skip
+                skipped += 1
+            break
+
+    print(f"\n{BOLD}Review complete:{RESET} "
+          f"{GREEN}Applied: {applied}{RESET}, "
+          f"Dismissed: {dismissed}, "
+          f"Skipped: {skipped}")
+
+
+# ---------------------------------------------------------------------------
 # Argparse setup
 # ---------------------------------------------------------------------------
 
@@ -1801,6 +2183,10 @@ def build_parser():
                           help="Find unindexed projects in base dirs")
     p_rescan.add_argument("--prune", action="store_true",
                           help="Remove projects whose directories no longer exist")
+    p_rescan.add_argument("--reslug", action="store_true",
+                          help="Rename project directories to match current slugify rules")
+    p_rescan.add_argument("--reslug-check", action="store_true",
+                          help="Interactively review and rename each project directory")
     p_rescan.add_argument("--verbose", "-v", action="store_true")
 
     # delete
@@ -1830,6 +2216,13 @@ def build_parser():
     p_idea.add_argument("--delete", metavar="ID", help="Delete an idea")
     p_idea.add_argument("--quick", "-q", action="store_true",
                         help="Skip optional prompts")
+
+    # reflect
+    p_reflect = sub.add_parser("reflect", help="Review ReflectFlow findings")
+    p_reflect.add_argument("--list", "-l", dest="list_findings", action="store_true",
+                           help="List pending findings (non-interactive)")
+    p_reflect.add_argument("--dismiss-errors", dest="dismiss_errors", action="store_true",
+                           help="Auto-archive error-only findings")
 
     # help
     p_help = sub.add_parser("help", help="Show help for a command")
@@ -1872,6 +2265,7 @@ def main():
         "rm": cmd_delete,
         "ignore": cmd_ignore,
         "idea": cmd_idea,
+        "reflect": cmd_reflect,
     }
 
     handler = commands.get(args.command)

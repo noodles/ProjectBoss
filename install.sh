@@ -64,6 +64,16 @@ proj() {
     else
         command python3 ~/bin/proj.py "$@"
     fi
+    # Handle cd-target signal from proj new
+    local cd_target="$HOME/.proj/.cd_target"
+    if [[ -f "$cd_target" ]]; then
+        local dest
+        dest=$(<"$cd_target")
+        rm -f "$cd_target"
+        if [[ -n "$dest" && -d "$dest" ]]; then
+            cd "$dest"
+        fi
+    fi
 }
 # <<< proj shell function <<<
 SHELL_FUNC
