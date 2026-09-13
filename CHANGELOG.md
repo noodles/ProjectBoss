@@ -17,6 +17,7 @@ on-disk index format is called out explicitly in its entry.
 
 - Install with Homebrew: `brew tap noodles/tap && brew install pb`. The previous route was cloning the repository and running a bash script that edits your `~/.zshrc`, which is a lot to ask of someone who has known about the tool for forty seconds
 - The shell function moved out of `install.sh` into `shell/pb.zsh`, so the installer and the Homebrew formula share one definition rather than keeping two copies in step
+- Two wrinkles found by installing it as a stranger would, both now documented: Homebrew refuses formulae from an untrusted third-party tap until `brew trust noodles/tap`, and `brew install pb` resolves to an unrelated Pushbullet cask, so the formula has to be named in full. The command itself is still just `pb`
 - `install.sh` now symlinks `~/bin/pb` rather than `~/bin/pb.py`, so the shell function can call `command pb` and behave identically whichever way pb was installed. The old `pb.py` symlink is removed on upgrade
 
 ## 2026.09.1

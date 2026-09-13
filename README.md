@@ -66,6 +66,35 @@ are not.
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew tap noodles/tap
+brew trust noodles/tap
+brew install noodles/tap/pb
+```
+
+Three commands rather than one, for two reasons worth knowing about.
+
+Homebrew now refuses to load formulae from a third-party tap until you trust it,
+which is a good default and applies to every tap, not just this one. And the
+formula has to be named in full, because `brew install pb` resolves to an
+unrelated (and currently disabled) cask for a Pushbullet desktop app. The command
+itself is still just `pb`; nothing else on macOS installs one.
+
+Then add the shell function, which is what lets `pb open` change your shell's
+directory, something a command cannot do on its own:
+
+```bash
+echo 'source '"$(brew --prefix pb)"'/share/pb/pb.zsh' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Everything except `pb open` and the cd offer at the end of `pb new` works
+without it.
+
+### From a clone
+
 ```bash
 bash install.sh
 source ~/.zshrc
