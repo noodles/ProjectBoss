@@ -1,12 +1,46 @@
 # ProjectBoss
 
-Local CLI tool (`proj`) for creating, finding, and managing projects with consistent structure, a searchable index, and automatic staleness tracking.
+[![test](https://github.com/noodles/ProjectBoss/actions/workflows/test.yml/badge.svg)](https://github.com/noodles/ProjectBoss/actions/workflows/test.yml)
 
-Zero external dependencies — pure Python 3 + stdlib.
+`proj` is a command-line tool for people whose projects folder has got away
+from them. It creates projects with the same structure every time, keeps an
+index of them so you can find one by a fragment of its name, and tells you
+which ones you have quietly stopped working on.
 
-**Requires macOS and zsh.** Opening projects uses `open -a`, the clipboard paste
-in `proj new` uses `pbpaste`, and the installer writes a shell function to
-`~/.zshrc`. Everything else is portable; those three are not.
+```console
+$ proj list
+ID   Name             Status   Category   Last Worked   Summary
+──   ──────────────   ──────   ────────   ───────────   ────────────────────────
+1    Invoice Chaser   active   Work       2026-09-13    Chases overdue invoices…
+2    Site Redesign    stale    Clients    2026-08-23    Marketing site rebuild
+3    Recipe Box       stale    Personal   2026-08-04    Somewhere to keep recip…
+
+$ proj open recipe        # any fragment of the name works, and it cd's you there
+Opened: /Users/you/Projects/Personal/recipe-box
+```
+
+`proj new` asks a few questions, then makes the folder, a README, a docs
+folder, a git repo, optionally a GitHub repo, and optionally a decision log,
+and records it all in the index.
+
+**Status is worked out, not stored.** A project is active, stale after two
+weeks of silence, or archived after three months. You never mark anything;
+`proj list` just stops lying to you about what you are actually working on.
+
+**Nothing gets lost.** `proj rescan --discover` walks your projects folder and
+offers to index anything it finds that looks like a real project, and
+`--review` does the reverse: it flags entries that turned out to be a
+`node_modules`, or a subfolder of a project you already have.
+
+## Requirements
+
+Python 3.9 or newer, macOS, and zsh. No packages to install: it is one file of
+standard library.
+
+The macOS part is real rather than untested caution. Opening projects uses
+`open -a`, the clipboard paste in `proj new` uses `pbpaste`, and the installer
+writes a shell function to `~/.zshrc`. Everything else is portable; those three
+are not.
 
 ## Installation
 

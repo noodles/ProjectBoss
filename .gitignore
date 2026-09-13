@@ -1,4 +1,7 @@
-docs/
+# Generated per-project prompt files, not documentation
+docs/*_initial_prompt.md
+docs/*-inital_prompt.md
+
 .specstory/
 __pycache__/
 *.pyc
