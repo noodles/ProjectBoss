@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
 
 # CalVer: YYYY.MM.PATCH, zero-padded month. It carries no compatibility signal,
 # so a change to the on-disk index format is called out in the changelog.
-VERSION = "2026.09.0"
+VERSION = "2026.09.1"
 
 # ANSI color support, disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -271,6 +271,19 @@ def read_key():
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
     return ch
+
+
+def display_path(path):
+    """Shorten a path for display by putting `~` back. The home prefix is noise
+    in every line it appears in. Stored data and --json keep absolute paths."""
+    if not path:
+        return path
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
 
 
 def open_in_app(app, path):
@@ -1103,7 +1116,7 @@ def cmd_new(args):
 
     print(f"\nCreated project: {name}")
     print(f"  ID:       {entry_id}")
-    print(f"  Path:     {project_root}")
+    print(f"  Path:     {display_path(project_root)}")
     print(f"  Category: {category}")
     if summary:
         print(f"  Summary:  {summary}")
@@ -1254,8 +1267,8 @@ def cmd_info(args):
     print(f"  Category:      {entry.get('category', '-')}")
     print(f"  Summary:       {entry.get('summary', '-')}")
     print(f"  Tags:          {', '.join(entry.get('tags', [])) or '-'}")
-    print(f"  Project Root:  {entry.get('project_root', '-')}")
-    print(f"  Docs:          {entry.get('docs_path', '-')}")
+    print(f"  Project Root:  {display_path(entry.get('project_root', '-'))}")
+    print(f"  Docs:          {display_path(entry.get('docs_path', '-'))}")
     if repo_url:
         print(f"  Repo:          {repo_url}")
     print(f"  Base Dir:      {entry.get('base_directory', '-')}")

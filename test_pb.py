@@ -629,6 +629,35 @@ class TestProjectsIndex(TempDirCase):
         self.assertIn("Beta", text)
 
 
+class TestDisplayPath(unittest.TestCase):
+
+    def test_home_becomes_a_tilde(self):
+        home = os.path.expanduser("~")
+        self.assertEqual(pb.display_path(os.path.join(home, "Projects", "a")),
+                         os.path.join("~", "Projects", "a"))
+
+    def test_home_itself(self):
+        self.assertEqual(pb.display_path(os.path.expanduser("~")), "~")
+
+    def test_paths_outside_home_are_untouched(self):
+        self.assertEqual(pb.display_path("/opt/thing"), "/opt/thing")
+
+    def test_a_sibling_of_home_is_not_shortened(self):
+        # "/Users/rich-old" must not become "~-old".
+        self.assertEqual(pb.display_path(os.path.expanduser("~") + "-old"),
+                         os.path.expanduser("~") + "-old")
+
+    def test_empty_path_survives(self):
+        self.assertEqual(pb.display_path(""), "")
+
+    def test_json_keeps_the_absolute_path(self):
+        cfg = {"status_thresholds": {"stale_after_days": 14,
+                                     "archived_after_days": 90}}
+        root = os.path.join(os.path.expanduser("~"), "Projects", "a")
+        out = pb.entry_as_json(entry(project_root=root), cfg)
+        self.assertEqual(out["project_root"], root)
+
+
 # ---------------------------------------------------------------------------
 # JSON output: a contract, once anything parses it
 # ---------------------------------------------------------------------------

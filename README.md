@@ -7,17 +7,11 @@ from them. It creates projects with the same structure every time, keeps an
 index of them so you can find one by a fragment of its name, and tells you
 which ones you have quietly stopped working on.
 
-```console
-$ pb list
-ID   Name             Status   Category   Last Worked   Summary
-──   ──────────────   ──────   ────────   ───────────   ────────────────────────
-1    Invoice Chaser   active   Work       2026-09-13    Chases overdue invoices…
-2    Site Redesign    stale    Clients    2026-08-23    Marketing site rebuild
-3    Recipe Box       stale    Personal   2026-08-04    Somewhere to keep recip…
+![pb in use](demo/pb.gif)
 
-$ pb open recipe        # any fragment of the name works, and it cd's you there
-Opened: /Users/you/Projects/Personal/recipe-box
-```
+`pb open recipe` takes any fragment of a name and changes directory into the
+project. Recording made with [`demo/record.sh`](demo/record.sh), against a
+throwaway home directory so it never shows real projects.
 
 `pb new` asks a few questions, then makes the folder, a README, a docs
 folder, a git repo, optionally a GitHub repo, and optionally a decision log,
@@ -31,6 +25,34 @@ weeks of silence, or archived after three months. You never mark anything;
 offers to index anything it finds that looks like a real project, and
 `--review` does the reverse: it flags entries that turned out to be a
 `node_modules`, or a subfolder of a project you already have.
+
+## Why not zoxide, fd, or just `cd`
+
+Those find **directories**. `pb` tracks **projects**, which is a different
+thing with different questions attached.
+
+| You want to | Reach for |
+|---|---|
+| Jump to a directory you visit often | [zoxide](https://github.com/ajeetdsouza/zoxide), autojump |
+| Find a file or folder by pattern | [fd](https://github.com/sharkdp/fd), `find` |
+| Clone and organise remote repositories | [ghq](https://github.com/x-motemen/ghq) |
+| Know which of your projects you have quietly abandoned | `pb` |
+| Create projects with the same structure every time | `pb` |
+
+zoxide answers "where is the folder I was just in". It learns from where you
+`cd`, so a project you have not touched in two months is exactly the one it has
+forgotten, which is the one you most need reminding about. `pb` is the opposite:
+the longer you leave something, the more loudly it says so.
+
+The practical difference is what `pb` stores that a directory does not: a
+one-line summary of what the project is for, a category, and a computed sense of
+whether it is alive. `pb list` is a status report, not a jump list. And `pb new`
+means a new project arrives with a README, a docs folder, a git repository, and
+optionally a GitHub repository and a decision log, rather than an empty folder
+you will fill in inconsistently.
+
+They compose rather than compete. Plenty of people will want zoxide for
+navigation and `pb` for the inventory.
 
 ## Requirements
 

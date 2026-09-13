@@ -4,6 +4,12 @@ Versions are CalVer, `YYYY.MM.PATCH`, from 2026.09.0 onwards. Releases up to
 0.8.0 used SemVer. CalVer carries no compatibility signal, so any change to the
 on-disk index format is called out explicitly in its entry.
 
+## 2026.09.1
+
+- Add a demo recording to the README, reproducible with `demo/record.sh`. It runs against a throwaway home directory built by `demo/setup.sh`, so it can never show real projects and re-recording gives the same session
+- Add a "Why not zoxide, fd, or just `cd`" section to the README. Those find directories; this tracks projects. zoxide learns from where you `cd`, so the project you have not touched in two months is precisely the one it has forgotten, which is the one worth being reminded about
+- `pb info` and `pb new` now print `~/Projects/...` rather than the full home path. The home prefix is noise in every line it appears in. Stored data and `--json` keep absolute paths, since anything parsing them needs a path it can use
+
 ## 2026.09.0
 
 **The command is now `pb`, not `proj`.** `brew install proj` installs PROJ, the
