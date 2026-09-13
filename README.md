@@ -25,7 +25,8 @@ Create a new project interactively or with flags.
 ```bash
 proj new                              # interactive
 proj new --name "My Project" -c Noodle -s "A cool thing" --no-notes
-proj new --adr                        # also scaffold an ADR decision log
+proj new --adr                        # skip the decision-log question, always scaffold
+proj new --no-adr                     # skip the decision-log question, never scaffold
 proj new -o momentous-developments    # pick the GitHub owner up front
 proj new --no-remote                  # local git only, no GitHub repo
 ```
@@ -41,6 +42,10 @@ is set and pushed.
 `--org` skips the prompt and uses that owner. `--no-remote` skips GitHub
 entirely. With `--no-notes`, a repo is only created when `--org` is given, so an
 unattended run never publishes anything by accident.
+
+`--no-notes` is fully non-interactive: it initialises git (the prompt's default)
+and skips every other question, so a decision log and a GitHub repo happen only
+when `--adr`/`--adr-site` and `--org` ask for them.
 
 ### `proj list`
 
@@ -126,37 +131,57 @@ proj ignore --list                    # show all ignored paths
 proj ignore --remove docs             # un-ignore (substring match)
 ```
 
-### `proj adr init`
+### `proj adr`
 
-Scaffold an Architecture Decision Record log in a project — a durable record of *why* things are
-the way they are, in [MADR](https://adr.github.io/) format, browsable as a searchable site via
-[log4brains](https://github.com/thomvaill/log4brains).
+A decision log: a durable record of *why* things are the way they are, one
+[MADR](https://adr.github.io/)-format markdown file per decision in `docs/adr/`.
 
 ```bash
 proj adr init                         # scaffold in the project containing the current directory
 proj adr init 3                       # scaffold by ID, name, or slug
-proj adr init 3 --force               # overwrite existing scaffold files
+proj adr new "Postgres over DynamoDB" # write one record, dated and titled
+proj adr new "..." -p 3               # write it in another project
 proj adr init 3 --no-skill            # skip the .claude/skills/adr/SKILL.md agent skill
-proj new --adr                        # scaffold at project creation time
+proj new --adr                        # scaffold at project creation time without asking
 ```
+
+`proj new` offers a decision log alongside its other prompts; `--no-adr` skips the question.
 
 Creates:
 
 ```
 docs/adr/template.md          MADR template with agent guidance
-docs/adr/README.md            how to browse, and the immutability rules
-docs/adr/index.md             knowledge-base homepage
-.log4brains.yml               project name, timezone, adrFolder
+docs/adr/README.md            how to create records, and the immutability rules
 .claude/skills/adr/SKILL.md   Claude Code skill so agents read and write the log
-.gitignore                    appends /.log4brains (build output)
 ```
 
-If the project has a `package.json`, the `adr:new` / `adr:preview` / `adr:build` / `adr:serve`
-scripts are merged into it, using the runner matching its lockfile (pnpm, yarn, or npm). Projects
-without one get the pinned `npx` invocations directly in the generated docs — log4brains needs
-only `.log4brains.yml` and `docs/adr/template.md`, not a Node project.
+`proj adr new` copies the template to `docs/adr/YYYYMMDD-slug.md` with the title and date filled
+in and the agent-guidance comment stripped. Writing the file by hand works just as well.
 
-Re-running skips files that already exist, so it's safe on a project that already has a log.
+Re-running `init` skips files that already exist, so it's safe on a project that already has a
+log. `--force` overwrites them.
+
+#### The website (`--site`)
+
+[log4brains](https://github.com/thomvaill/log4brains) renders the same records as a searchable
+static site. It's a Node tool, so it earns its place in a project with a real readership and not
+in a three-record log or a project that isn't software. It's opt-in:
+
+```bash
+proj adr init --site                  # scaffold with the website
+proj adr init --site --force          # add the website to a log that already exists
+proj new --adr-site                   # at project creation time
+```
+
+That adds `docs/adr/index.md` (the knowledge-base homepage), `.log4brains.yml` (project name,
+timezone, adrFolder), and a `/.log4brains` line in `.gitignore` for the build output. If the
+project has a `package.json`, the `adr:new` / `adr:preview` / `adr:build` / `adr:serve` scripts
+are merged into it using the runner matching its lockfile (pnpm, yarn, or npm); projects without
+one get the pinned `npx` invocations directly in the generated docs.
+
+The records are identical in both modes, same format and same filenames, so adding the site later
+never renames or rewrites one. Use `--force` when you do, otherwise the README and skill are left
+describing a markdown-only log.
 
 ### `proj help`
 

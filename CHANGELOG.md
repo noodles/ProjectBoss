@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- The ADR decision log no longer requires log4brains. `proj adr init` now scaffolds plain markdown (`docs/adr/template.md`, `README.md`, and the agent skill) and nothing else: no `.log4brains.yml`, no `package.json` scripts, no `.gitignore` entry, no Node. log4brains is a website generator, which earns its place in a platform with a readership and not in a three-record log or a project that isn't software
+- Add `proj adr init --site` for the log4brains version. The records are identical either way, same MADR format and same `YYYYMMDD-slug.md` names, so running it over an existing plain log adds the website without renaming or rewriting a single record (pass `--force` to refresh the README and skill prose, which otherwise still describe a markdown-only log)
+- Add `proj adr new "<title>"`, which writes `docs/adr/YYYYMMDD-slug.md` from the project's template with the title and date filled in and the agent-guidance comment stripped. log4brains used to be the only thing that created a record; without this, a plain log had no way to start one
+- `proj new` now asks "Add a decision log?" alongside the other prompts, defaulting to yes. `--adr` and the new `--adr-site` still scaffold without asking, and `--no-adr` skips the question
+- `--no-notes` is now genuinely non-interactive. It previously still stopped for the git-init and change-directory prompts, so a scripted `proj new` hung or aborted. It takes the git-init default and skips the rest; a decision log or a GitHub repo is created only when the matching flag says so
+
 ## 0.4.0
 
 - `proj new` now offers to create a GitHub repo after `git init`, choosing the owner from a new `github_orgs` list in the config with `default_github_org` pre-selected. Personal accounts and organisations are the same thing to `gh`, so both live in the one list

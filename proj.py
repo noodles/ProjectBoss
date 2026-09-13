@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -961,7 +961,8 @@ def cmd_new(args):
 
     # 8. Initialise git repository
     git_ok = False
-    if prompt_confirm("Initialise git repository?", default=True):
+    # --no-notes takes the prompt's default rather than stopping for an answer.
+    if args.no_notes or prompt_confirm("Initialise git repository?", default=True):
         try:
             subprocess.run(
                 ["git", "init", "--initial-branch=main"],
@@ -990,8 +991,12 @@ def cmd_new(args):
 
     # 9. Optional ADR decision log
     adr_ok = False
-    if args.adr:
-        adr_ok = scaffold_adr(project_root, name, quiet=True)
+    adr_site = args.adr_site
+    want_adr = args.adr or adr_site
+    if not want_adr and not args.no_adr and not args.no_notes:
+        want_adr = prompt_confirm("Add a decision log (docs/adr)?", default=True)
+    if want_adr:
+        adr_ok = scaffold_adr(project_root, name, quiet=True, site=adr_site)
 
     # 10. Add to index
     entry = {
@@ -1025,7 +1030,7 @@ def cmd_new(args):
     if repo_url:
         print(f"  Repo:     {repo_url}")
     if adr_ok:
-        adr_new_cmd, _ = _adr_commands(project_root)
+        adr_new_cmd, _ = _adr_commands(project_root, site=adr_site)
         print(f"  ADR log:  docs/adr/ — add a record with `{adr_new_cmd}`")
 
     # 12. Offer to open in editor(s)
@@ -1047,7 +1052,8 @@ def cmd_new(args):
             open_in_app(prompt_editor, initial_prompt_path)
 
     # 13. Offer to cd into the new project directory
-    if prompt_confirm("Change into the new project directory?", default=True):
+    if not args.no_notes and prompt_confirm("Change into the new project directory?",
+                                            default=True):
         # A child process cannot change the parent shell's directory, so the
         # path is handed to the `proj` shell function via a drop file.
         try:
@@ -2704,17 +2710,7 @@ ADR_README_MD = """\
 This is the decision log for **{{name}}**. Each file records one architecturally-significant
 decision: the context, the options weighed, the choice, and its consequences.
 
-## Creating and browsing
-
-```bash
-{{new_cmd}}       # create a new ADR (auto-dated + auto-numbered filename)
-{{serve_cmd}}     # build the static site and serve it locally
-```
-
-These run [log4brains](https://github.com/thomvaill/log4brains) via `npx` (pinned to
-{{l4b_version}}), so **nothing is added to this project's dependency tree**. Node is only needed
-for browsing and for the auto-numbered filename — the records themselves are plain markdown you
-can write by hand.
+{{creating}}
 
 ## The rules
 
@@ -2730,8 +2726,7 @@ See `template.md` for the full format.
 
 ## More information
 
-- [Log4brains documentation](https://github.com/thomvaill/log4brains/tree/develop#readme)
-- [ADR GitHub organization](https://adr.github.io/)
+{{more_info}}- [ADR GitHub organization](https://adr.github.io/)
 
 <!-- Scaffolded by `proj adr init`. -->
 """
@@ -2794,14 +2789,7 @@ approach. Do NOT write one for a routine feature or a bugfix.
 Keep it scoped to **this repository**. Decisions belonging to another repo belong in that repo's
 log.
 
-## How to create one
-
-```bash
-{{new_cmd}}       # prompts for a title, then creates docs/adr/YYYYMMDD-slug.md
-{{serve_cmd}}     # build + serve the knowledge base locally
-```
-
-These run log4brains via `npx` (pinned), so nothing is added to the project's dependency tree.
+{{howto}}
 
 Fill in the MADR sections (see `docs/adr/template.md`): Context and Problem Statement, Considered
 Options, Decision Outcome (start with `Chosen option: "..."`), Consequences.
@@ -2821,6 +2809,56 @@ Options, Decision Outcome (start with `Chosen option: "..."`), Consequences.
   This is the ONLY edit you may make to an accepted ADR — flipping its status and adding the link.
 - A decision that was **decided but not yet shipped** is a valid ADR — set `Status: proposed`.
 """
+
+ADR_CREATING_SITE = """\
+## Creating and browsing
+
+```bash
+{{new_cmd}}       # create a new ADR (auto-dated + auto-numbered filename)
+{{serve_cmd}}     # build the static site and serve it locally
+```
+
+These run [log4brains](https://github.com/thomvaill/log4brains) via `npx` (pinned to
+{{l4b_version}}), so **nothing is added to this project's dependency tree**. Node is only needed
+for browsing and for the auto-numbered filename — the records themselves are plain markdown you
+can write by hand.
+"""
+
+ADR_CREATING_LIGHT = """\
+## Creating a record
+
+```bash
+{{new_cmd}}
+```
+
+That copies `template.md` to `docs/adr/YYYYMMDD-slug.md` with the title and date filled in. The
+records are plain markdown, so writing the file by hand works just as well.
+
+There is no website here by design: read the log in your editor, in date order. If this project
+ever grows enough records to want a searchable site, `proj adr init --site` adds
+[log4brains](https://github.com/thomvaill/log4brains) over the top without renaming or rewriting
+anything.
+"""
+
+ADR_HOWTO_SITE = """\
+## How to create one
+
+```bash
+{{new_cmd}}       # prompts for a title, then creates docs/adr/YYYYMMDD-slug.md
+{{serve_cmd}}     # build + serve the knowledge base locally
+```
+
+These run log4brains via `npx` (pinned), so nothing is added to the project's dependency tree."""
+
+ADR_HOWTO_LIGHT = """\
+## How to create one
+
+```bash
+{{new_cmd}}       # creates docs/adr/YYYYMMDD-slug.md from template.md
+```
+
+Plain markdown, no build step and no website. Writing the file by hand is equally fine, as long
+as the name is `YYYYMMDD-slug.md` and the format matches `template.md`."""
 
 ADR_LOG4BRAINS_YML = """\
 project:
@@ -2863,9 +2901,15 @@ def _detect_pkg_runner(project_root):
     return "npm run"
 
 
-def _adr_commands(project_root):
-    """Return (new_cmd, serve_cmd) — package scripts when the project has a
-    package.json, raw pinned npx invocations otherwise."""
+def _adr_commands(project_root, site=True):
+    """Return (new_cmd, serve_cmd) for the project's ADR log.
+
+    Without the log4brains site, `proj` writes the records itself and there is
+    nothing to serve. With it, prefer package scripts over raw npx when the
+    project has a package.json to hang them off.
+    """
+    if not site:
+        return 'proj adr new "<title>"', None
     runner = _detect_pkg_runner(project_root)
     if runner:
         return f"{runner} adr:new", f"{runner} adr:serve"
@@ -2938,28 +2982,43 @@ def _adr_add_pkg_scripts(project_root):
     return added
 
 
-def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False):
-    """Create the ADR log scaffold in project_root. Returns True on success."""
+def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False, site=False):
+    """Create the ADR log scaffold in project_root. Returns True on success.
+
+    The default is a plain markdown log. `site=True` adds log4brains on top,
+    which renders the same records as a searchable website.
+    """
     if not os.path.isdir(project_root):
         print(f"Project directory does not exist: {project_root}")
         return False
 
     adr_dir = os.path.join(project_root, "docs", "adr")
-    new_cmd, serve_cmd = _adr_commands(project_root)
+    new_cmd, serve_cmd = _adr_commands(project_root, site=site)
     subs = {
         "name": name,
         "tz": _detect_timezone(),
         "new_cmd": new_cmd,
         "serve_cmd": serve_cmd,
         "l4b_version": LOG4BRAINS_VERSION,
+        "creating": ADR_CREATING_SITE if site else ADR_CREATING_LIGHT,
+        "howto": ADR_HOWTO_SITE if site else ADR_HOWTO_LIGHT,
+        "more_info": ("- [Log4brains documentation]"
+                      "(https://github.com/thomvaill/log4brains/tree/develop#readme)\n"
+                      if site else ""),
     }
+    # The swapped-in sections carry placeholders of their own.
+    subs["creating"] = _render(subs["creating"], **subs).rstrip("\n")
+    subs["howto"] = _render(subs["howto"], **subs).rstrip("\n")
 
     files = [
         (os.path.join(adr_dir, "template.md"), ADR_TEMPLATE_MD),
         (os.path.join(adr_dir, "README.md"), ADR_README_MD),
-        (os.path.join(adr_dir, "index.md"), ADR_INDEX_MD),
-        (os.path.join(project_root, ".log4brains.yml"), ADR_LOG4BRAINS_YML),
     ]
+    if site:
+        files += [
+            (os.path.join(adr_dir, "index.md"), ADR_INDEX_MD),
+            (os.path.join(project_root, ".log4brains.yml"), ADR_LOG4BRAINS_YML),
+        ]
     if with_skill:
         files.append(
             (os.path.join(project_root, ".claude", "skills", "adr", "SKILL.md"), ADR_SKILL_MD)
@@ -2970,8 +3029,9 @@ def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False):
         outcome = _adr_write(path, _render(template, **subs), force)
         results.append((os.path.relpath(path, project_root), outcome))
 
-    gitignore = _adr_add_gitignore(project_root)
-    scripts_added = _adr_add_pkg_scripts(project_root)
+    # Only the site has build output to ignore or scripts to hang off.
+    gitignore = _adr_add_gitignore(project_root) if site else "skipped"
+    scripts_added = _adr_add_pkg_scripts(project_root) if site else None
 
     if quiet:
         return True
@@ -2988,45 +3048,110 @@ def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False):
         print(f"  {GREEN}added     {RESET} package.json scripts: {', '.join(scripts_added)}")
 
     if any(o == "skipped" for _, o in results) and not force:
-        print(f"\n  {DIM}Re-run with --force to overwrite existing files.{RESET}")
+        extra = (" Until then the log still describes itself as markdown-only."
+                 if site else "")
+        print(f"\n  {DIM}Re-run with --force to overwrite existing files.{extra}{RESET}")
 
     print(f"\n  Create a record:  {CYAN}{new_cmd}{RESET}")
-    print(f"  Browse the log:   {CYAN}{serve_cmd}{RESET}")
-    if scripts_added is None:
-        print(f"  {DIM}No package.json found — the commands above run log4brains directly.{RESET}")
+    if serve_cmd:
+        print(f"  Browse the log:   {CYAN}{serve_cmd}{RESET}")
+        if scripts_added is None:
+            print(f"  {DIM}No package.json found — the commands above run log4brains "
+                  f"directly.{RESET}")
+    else:
+        print(f"  {DIM}Plain markdown, no website. Add one later with "
+              f"`proj adr init --site`.{RESET}")
     return True
 
 
-def cmd_adr(args):
+def _adr_entry(query, usage):
+    """Resolve the project an `adr` subcommand acts on: an explicit query, or
+    whichever indexed project contains the working directory."""
     entries = load_index()
 
-    entry = None
-    if args.query:
-        entry = find_entry(entries, args.query)
+    if query:
+        entry = find_entry(entries, query)
         if not entry:
-            print(f"No project found for '{args.query}'")
-            return
-    else:
-        # Fall back to whichever indexed project contains the working directory.
-        cwd = os.path.realpath(os.getcwd())
-        for e in entries:
-            root = e.get("project_root", "")
-            if not root:
-                continue
-            root = os.path.realpath(os.path.expanduser(root))
-            if cwd == root or cwd.startswith(root + os.sep):
-                entry = e
-                break
-        if not entry:
-            print("Not inside a tracked project. Pass a project: proj adr init <id|name>")
-            return
+            print(f"No project found for '{query}'")
+        return entry
+
+    cwd = os.path.realpath(os.getcwd())
+    for e in entries:
+        root = e.get("project_root", "")
+        if not root:
+            continue
+        root = os.path.realpath(os.path.expanduser(root))
+        if cwd == root or cwd.startswith(root + os.sep):
+            return e
+
+    print(f"Not inside a tracked project. Pass a project: {usage}")
+    return None
+
+
+def _adr_record(template, title, date_str):
+    """Fill a record out of the ADR template: real title, real date, and no
+    agent-guidance comment (that belongs in template.md, not in a record)."""
+    body = re.sub(r"<!--\s*\nAGENT GUIDANCE.*?-->\n+", "", template, flags=re.DOTALL)
+    lines = body.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.startswith("# "):
+            lines[i] = f"# {title}\n"
+        elif line.startswith("- Date:"):
+            lines[i] = f"- Date: {date_str}\n"
+    return "".join(lines).lstrip("\n")
+
+
+def cmd_adr(args):
+    if args.action == "new":
+        _adr_new(args)
+        return
+
+    entry = _adr_entry(args.query, "proj adr init <id|name>")
+    if not entry:
+        return
 
     scaffold_adr(
         os.path.expanduser(entry["project_root"]),
         entry["name"],
         force=args.force,
         with_skill=not args.no_skill,
+        site=args.site,
     )
+
+
+def _adr_new(args):
+    """Create one ADR record from the project's template."""
+    title = (args.query or "").strip()
+    if not title:
+        print('Usage: proj adr new "<title>"')
+        return
+
+    entry = _adr_entry(args.project, 'proj adr new "<title>" -p <id|name>')
+    if not entry:
+        return
+
+    project_root = os.path.expanduser(entry["project_root"])
+    adr_dir = os.path.join(project_root, "docs", "adr")
+    template_path = os.path.join(adr_dir, "template.md")
+    if not os.path.isfile(template_path):
+        print(f"No ADR log in {entry['name']} yet. Run `proj adr init` first.")
+        return
+
+    with open(template_path) as f:
+        template = f.read()
+
+    today = datetime.date.today()
+    path = os.path.join(adr_dir, f"{today:%Y%m%d}-{slugify(title)}.md")
+    if os.path.exists(path):
+        print(f"Already exists: {os.path.relpath(path, project_root)}")
+        return
+
+    with open(path, "w") as f:
+        f.write(_adr_record(template, title, f"{today:%Y-%m-%d}"))
+
+    print(f"  {GREEN}created{RESET}   {os.path.relpath(path, project_root)}")
+    print(f"  {DIM}Fill in Context, Considered Options, Decision Outcome, "
+          f"Consequences.{RESET}")
 
 
 # ---------------------------------------------------------------------------
@@ -3060,7 +3185,11 @@ def build_parser():
     p_new.add_argument("--no-remote", action="store_true",
                        help="Skip creating a GitHub repo")
     p_new.add_argument("--adr", action="store_true",
-                       help="Scaffold an ADR decision log in docs/adr/")
+                       help="Scaffold an ADR decision log in docs/adr/ without asking")
+    p_new.add_argument("--adr-site", dest="adr_site", action="store_true",
+                       help="Scaffold the ADR log with the log4brains website")
+    p_new.add_argument("--no-adr", dest="no_adr", action="store_true",
+                       help="Skip the decision log prompt")
 
     # list
     p_list = sub.add_parser("list", aliases=["ls"], help="List projects")
@@ -3144,10 +3273,15 @@ def build_parser():
 
     # adr
     p_adr = sub.add_parser("adr", help="Scaffold an ADR decision log in a project")
-    p_adr.add_argument("action", nargs="?", choices=["init"], default="init",
-                       help="ADR action (only 'init' for now)")
+    p_adr.add_argument("action", nargs="?", choices=["init", "new"], default="init",
+                       help="init scaffolds the log; new writes one record")
     p_adr.add_argument("query", nargs="?",
-                       help="Project ID, name, or slug (defaults to the current directory)")
+                       help="For init: project ID, name, or slug (defaults to the current "
+                            "directory). For new: the decision title")
+    p_adr.add_argument("--project", "-p",
+                       help="For new: which project (defaults to the current directory)")
+    p_adr.add_argument("--site", action="store_true",
+                       help="Also set up the log4brains website over the records")
     p_adr.add_argument("--force", "-f", action="store_true",
                        help="Overwrite scaffold files that already exist")
     p_adr.add_argument("--no-skill", dest="no_skill", action="store_true",
