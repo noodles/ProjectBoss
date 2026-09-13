@@ -1,5 +1,40 @@
 # Changelog
 
+Versions are CalVer, `YYYY.MM.PATCH`, from 2026.09.0 onwards. Releases up to
+0.8.0 used SemVer. CalVer carries no compatibility signal, so any change to the
+on-disk index format is called out explicitly in its entry.
+
+## 2026.09.0
+
+**The command is now `pb`, not `proj`.** `brew install proj` installs PROJ, the
+cartographic projections library, which puts a `proj` binary on `PATH` and
+arrives as a dependency of gdal, postgis and qgis. Shipping a tool that shadows
+it, or gets shadowed by it depending on `PATH` order, was a defect rather than a
+preference. Nothing in Homebrew or on a stock macOS installs a `pb` command.
+
+- `proj.py` is now `pb.py`, the shell function is `pb`, and the environment
+  variable the function sets is `PB_SHELL_WRAPPER`
+- **The data directory moved from `~/.proj` to `~/.pb`.** It migrates itself on
+  first run, and only when the old directory exists and the new one does not, so
+  it can never merge two sets of data or overwrite anything. The notice goes to
+  stderr so that stdout stays parseable
+- Re-run `bash install.sh && source ~/.zshrc` to replace the old shell function.
+  The old `proj` name is deliberately not kept as an alias: it would re-create
+  the collision for exactly the people the rename protects
+- Add `pb list --json` for scripts and agents. It emits the same object shape as
+  `pb info --json`, which means the stored fields plus `status`, computed from
+  `last_worked_at` rather than stored. Filters, sorting and `--limit` apply, so
+  the JSON is exactly what the table would have shown; an empty result is `[]`
+  rather than prose
+- Ship a Claude Code skill at `skills/pb/SKILL.md` so an agent can resolve a
+  project the user names out loud into a path. `install.sh` offers to link it
+  into `~/.claude/skills/` and defaults to no, because a project CLI has no
+  business writing into an agent's config directory uninvited
+- Remove every em dash and en dash from the repository, including the ADR
+  templates that get scaffolded into other people's projects, and add a test
+  that fails if one comes back
+- `pb info` now prints `-` rather than an em dash for an empty field
+
 ## 0.8.0
 
 - Add a test suite: 85 tests in `test_proj.py`, stdlib `unittest`, no dependencies. Run with `python3 -m unittest discover`. Covers slugging, status thresholds, query resolution, ID allocation, frontmatter, remote-URL parsing, discovery classification, index review, the ignore list, the data layer, template rendering, and both ADR modes
@@ -19,7 +54,7 @@
 
 ## 0.6.0
 
-- Remove `proj reflect`. It reviewed findings from ReflectFlow, which is defunct, and read them from `~/.claude/reflectflow/staging` — a path nobody but its author had, so the command silently did nothing for everyone else. 250 lines gone
+- Remove `proj reflect`. It reviewed findings from ReflectFlow, which is defunct, and read them from `~/.claude/reflectflow/staging`, a path nobody but its author had, so the command silently did nothing for everyone else. 250 lines gone
 
 ## 0.5.0
 
@@ -42,16 +77,16 @@
 - `proj rescan --discover` now proposes instead of writing. Previously it added every directory it walked past straight to the index and printed the result as a receipt; it now reviews candidates with you and saves only on confirmation
 - Discovery skips dependency and build directories (`node_modules`, `dist`, `build`, `.venv`, `target`, …). The skip list already existed but was only used for mtime walks, never for discovery
 - Candidates are classified by evidence found inside them: `.git` or a build manifest means project, `README.md`/`docs/`/`src/` alone means maybe, nothing means probably not. The suggested action follows the classification and Enter accepts it
-- A repo sitting at category level is treated as misplaced rather than descended into — discovery offers to move it under a category, indexes it as one project, and repoints existing index entries at the new location
+- A repo sitting at category level is treated as misplaced rather than descended into. Discovery offers to move it under a category, indexes it as one project, and repoints existing index entries at the new location
 - Moving a repo into a category adds that category to the config list if it's missing
-- Add `proj rescan --review` to apply the same tests to entries already in the index, flagging dependency folders and subfolders of a project. Removes from the index only — never deletes files — and offers to index the real parent project
+- Add `proj rescan --review` to apply the same tests to entries already in the index, flagging dependency folders and subfolders of a project. Removes from the index only, never deletes files, and offers to index the real parent project
 - `--review` holds back "no project markers" judgement calls by default (reporting the count) and includes them with `-v`; entries created via `proj new` are never flagged
 - Add `proj rescan --discover --yes` for non-interactive use: adds only candidates with conclusive evidence, leaves the rest alone
 - `_base_for_path` compares absolute paths, so a relative or non-normalised base directory in the config still matches index entries
 
 ## 0.2.1
 
-- Fix the welcome logo rendering "Project" with the `j` looking like an `i` — the figlet descender row was missing
+- Fix the welcome logo rendering "Project" with the `j` looking like an `i`. The figlet descender row was missing
 - `proj idea --list` now prints a usage hint (`proj idea -d <id>` / `proj idea --delete <id>`) so the listed IDs point at the right command
 - `install.sh` now replaces an existing `proj` shell function in `~/.zshrc` instead of skipping it, so shell-side features ship on reinstall (backs up to `~/.zshrc.proj-backup`); previously the cd-on-new handler never reached existing installs
 - The shell function sets `PROJ_SHELL_WRAPPER=1`; `proj new` uses it to warn and print a `cd` command when the wrapper is missing, instead of silently doing nothing
@@ -132,4 +167,4 @@
 - Shell integration via `install.sh` for `proj open` directory switching
 - Symlink-aware scanning with cycle detection
 - Atomic JSON writes to prevent data corruption
-- Zero external dependencies — pure Python 3 stdlib
+- Zero external dependencies: pure Python 3 stdlib

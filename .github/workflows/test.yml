@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    # macOS because proj shells out to `open` and `pbpaste`, and the installer
+    # macOS because pb shells out to `open` and `pbpaste`, and the installer
     # writes to ~/.zshrc. Testing on Linux would pass while proving nothing.
     runs-on: macos-latest
     strategy:
@@ -22,4 +22,4 @@ jobs:
       - name: Run tests
         run: python3 -m unittest discover -v
       - name: Check the CLI starts
-        run: python3 proj.py --version
+        run: python3 pb.py --version

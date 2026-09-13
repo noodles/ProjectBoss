@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""proj — local CLI for creating, finding, and managing projects."""
+"""pb: a local CLI for creating, finding, and managing projects."""
 
 import argparse
 import copy
@@ -19,12 +19,15 @@ import uuid
 # Constants
 # ---------------------------------------------------------------------------
 
-PROJ_DIR = os.path.expanduser("~/.proj")
-CONFIG_PATH = os.path.join(PROJ_DIR, "config.json")
-INDEX_PATH = os.path.join(PROJ_DIR, "index.json")
-IGNORED_PATH = os.path.join(PROJ_DIR, "ignored.json")
-IDEAS_PATH = os.path.join(PROJ_DIR, "ideas.json")
-CD_TARGET_PATH = os.path.join(PROJ_DIR, ".cd_target")
+PB_DIR = os.path.expanduser("~/.pb")
+CONFIG_PATH = os.path.join(PB_DIR, "config.json")
+INDEX_PATH = os.path.join(PB_DIR, "index.json")
+IGNORED_PATH = os.path.join(PB_DIR, "ignored.json")
+IDEAS_PATH = os.path.join(PB_DIR, "ideas.json")
+CD_TARGET_PATH = os.path.join(PB_DIR, ".cd_target")
+
+# The command used to be `proj`, and its data lived in ~/.proj.
+LEGACY_DIR = os.path.expanduser("~/.proj")
 
 IDEA_CATEGORIES = [
     ("bug",           "🐛", "Bug",           "errors, unexpected behavior"),
@@ -38,8 +41,8 @@ IDEA_CATEGORIES = [
     ("refactor",      "🔧", "Refactor",      "refactoring without changing functionality"),
 ]
 
-# Deliberately empty of anything personal: `proj config init` fills these in by
-# asking, and it runs automatically the first time proj is used interactively.
+# Deliberately empty of anything personal: `pb config init` fills these in by
+# asking, and it runs automatically the first time pb is used interactively.
 DEFAULT_CONFIG = {
     "base_directories": [
         {"name": "default", "path": "~/Projects"}
@@ -62,9 +65,11 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.8.0"
+# CalVer: YYYY.MM.PATCH, zero-padded month. It carries no compatibility signal,
+# so a change to the on-disk index format is called out in the changelog.
+VERSION = "2026.09.0"
 
-# ANSI color support — disabled when piped or when NO_COLOR is set.
+# ANSI color support, disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 BOLD = "\033[1m" if _USE_COLOR else ""
@@ -89,8 +94,28 @@ _LOGO_LINES = [
 _LOGO_COLORS = [BOLD_CYAN, BOLD_CYAN, CYAN, BOLD_GREEN, GREEN, GREEN]
 
 # ---------------------------------------------------------------------------
-# Helpers — filesystem / atomic writes
+# Helpers: filesystem / atomic writes
 # ---------------------------------------------------------------------------
+
+
+def migrate_legacy_dir():
+    """Move ~/.proj to ~/.pb, once, when the tool was renamed under someone.
+
+    Only ever runs when the old directory exists and the new one does not, so
+    it cannot merge two sets of data or overwrite anything. Returns True if it
+    moved something.
+    """
+    if not os.path.isdir(LEGACY_DIR) or os.path.exists(PB_DIR):
+        return False
+    # Notices go to stderr: stdout has to stay parseable for --json.
+    try:
+        os.rename(LEGACY_DIR, PB_DIR)
+    except OSError as exc:
+        print(f"  Could not move {LEGACY_DIR} to {PB_DIR}: {exc}", file=sys.stderr)
+        return False
+    print(f"  Moved {LEGACY_DIR} to {PB_DIR} (the command is now `pb`).",
+          file=sys.stderr)
+    return True
 
 
 def ensure_dir(path):
@@ -107,7 +132,7 @@ def atomic_write_json(path, data):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — slugify
+# Helpers: slugify
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +149,7 @@ def slugify(name):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — status computation
+# Helpers: status computation
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +204,7 @@ def status_explanation(entry, config):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — YAML-ish frontmatter (minimal, no PyYAML dependency)
+# Helpers: YAML-ish frontmatter (minimal, no PyYAML dependency)
 # ---------------------------------------------------------------------------
 
 
@@ -232,7 +257,7 @@ def update_frontmatter_in_file(filepath, updates):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — interactive prompts
+# Helpers: interactive prompts
 # ---------------------------------------------------------------------------
 
 
@@ -297,7 +322,7 @@ def prompt_confirm(label, default=True):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — table formatting
+# Helpers: table formatting
 # ---------------------------------------------------------------------------
 
 
@@ -338,7 +363,7 @@ def format_table(headers, rows, max_width=None):
 
 
 # ---------------------------------------------------------------------------
-# Helpers — welcome screen
+# Helpers: welcome screen
 # ---------------------------------------------------------------------------
 
 
@@ -383,24 +408,24 @@ def print_welcome():
         out.append(f"  {DIM}Tracking {total} project{'s' if total != 1 else ''}"
                    f" ({active} active){RESET}")
     else:
-        out.append(f"  {DIM}No projects tracked yet — run {GREEN}proj new{RESET}"
+        out.append(f"  {DIM}No projects tracked yet. Run {GREEN}pb new{RESET}"
                    f"{DIM} to get started.{RESET}")
     out.append("")
 
     # Command reference
     out.append(f"  {BOLD}Commands:{RESET}")
     cmds = [
-        ("proj new",            "Create a new project"),
-        ("proj list",           "List all tracked projects"),
-        ("proj open <query>",   "Open a project directory"),
-        ("proj info <query>",   "Show project details"),
-        ("proj edit <query>",   "Edit project metadata"),
-        ("proj idea",           "Capture or list project ideas"),
-        ("proj adr init",       "Scaffold an ADR decision log"),
-        ("proj delete <query>", "Remove a project from the index"),
-        ("proj rescan",         "Update timestamps and detect missing projects"),
-        ("proj ignore",         "Ignore folders that aren't projects"),
-        ("proj config",         "Manage configuration"),
+        ("pb new",            "Create a new project"),
+        ("pb list",           "List all tracked projects"),
+        ("pb open <query>",   "Open a project directory"),
+        ("pb info <query>",   "Show project details"),
+        ("pb edit <query>",   "Edit project metadata"),
+        ("pb idea",           "Capture or list project ideas"),
+        ("pb adr init",       "Scaffold an ADR decision log"),
+        ("pb delete <query>", "Remove a project from the index"),
+        ("pb rescan",         "Update timestamps and detect missing projects"),
+        ("pb ignore",         "Ignore folders that aren't projects"),
+        ("pb config",         "Manage configuration"),
     ]
     for cmd, desc in cmds:
         out.append(f"    {GREEN}{cmd:<22}{RESET}{DIM}{desc}{RESET}")
@@ -408,8 +433,8 @@ def print_welcome():
 
     # Tips box
     box_lines = [
-        f"Run {GREEN}proj help <command>{RESET} for detailed usage.",
-        f"Use {GREEN}proj --version{RESET} to check your version.",
+        f"Run {GREEN}pb help <command>{RESET} for detailed usage.",
+        f"Use {GREEN}pb --version{RESET} to check your version.",
     ]
     box_width = 54
     out.append(_format_box(box_lines, box_width))
@@ -418,14 +443,14 @@ def print_welcome():
 
 
 # ---------------------------------------------------------------------------
-# Helpers — date formatting
+# Helpers: date formatting
 # ---------------------------------------------------------------------------
 
 
 def format_date(iso_str, short=False):
     """Format an ISO date string for display."""
     if not iso_str:
-        return "—"
+        return "-"
     try:
         dt = datetime.datetime.fromisoformat(iso_str)
         if short:
@@ -441,7 +466,7 @@ def now_iso():
 
 
 # ---------------------------------------------------------------------------
-# Helpers — git remote detection
+# Helpers: git remote detection
 # ---------------------------------------------------------------------------
 
 
@@ -578,7 +603,7 @@ def load_config():
 
 
 def save_config(cfg):
-    ensure_dir(PROJ_DIR)
+    ensure_dir(PB_DIR)
     atomic_write_json(CONFIG_PATH, cfg)
 
 
@@ -605,7 +630,7 @@ def load_index():
 
 
 def save_index(entries):
-    ensure_dir(PROJ_DIR)
+    ensure_dir(PB_DIR)
     atomic_write_json(INDEX_PATH, entries)
 
 
@@ -617,7 +642,7 @@ def load_ignored():
 
 
 def save_ignored(paths):
-    ensure_dir(PROJ_DIR)
+    ensure_dir(PB_DIR)
     atomic_write_json(IGNORED_PATH, sorted(set(paths)))
 
 
@@ -629,7 +654,7 @@ def load_ideas():
 
 
 def save_ideas(ideas):
-    ensure_dir(PROJ_DIR)
+    ensure_dir(PB_DIR)
     atomic_write_json(IDEAS_PATH, ideas)
 
 
@@ -645,7 +670,7 @@ def is_ignored(proj_path, ignored):
     """Check if a path (or its realpath) is in the ignored list.
 
     Compared case-insensitively, since the default macOS volume is, and a path
-    typed by hand into `proj ignore` won't always match the casing on disk.
+    typed by hand into `pb ignore` won't always match the casing on disk.
     (`os.path.normcase` is a no-op everywhere except Windows, so it can't do
     this job.) Realpaths are compared too, so a symlink matches its target.
     """
@@ -664,6 +689,19 @@ def next_id(entries):
         return "1"
     max_id = max(int(e["id"]) for e in entries if e.get("id", "").isdigit())
     return str(max_id + 1)
+
+
+def entry_as_json(entry, cfg, repo_url=None):
+    """The machine-readable shape of a project, shared by `list` and `info`.
+
+    It is the stored entry plus `status`, which is computed rather than stored
+    and so would otherwise be unavailable to anything reading the JSON.
+    """
+    out = dict(entry)
+    out["status"] = compute_status(entry, cfg)
+    if repo_url:
+        out["repo_url"] = repo_url
+    return out
 
 
 def find_entry(entries, query):
@@ -719,7 +757,7 @@ def generate_projects_index(entries, config):
         if not bd_entries:
             continue
 
-        lines = ["# Projects Index", "", f"*Auto-generated by proj — {datetime.date.today()}*", ""]
+        lines = ["# Projects Index", "", f"*Auto-generated by pb on {datetime.date.today()}*", ""]
 
         # Group by category
         by_cat = {}
@@ -734,7 +772,7 @@ def generate_projects_index(entries, config):
                 status = compute_status(e, config)
                 tag = f" `{status}`" if status != "active" else ""
                 summary = e.get("summary", "")
-                summary_part = f" — {summary}" if summary else ""
+                summary_part = f": {summary}" if summary else ""
                 lines.append(f"- **{e['name']}**{tag}{summary_part}")
             lines.append("")
 
@@ -777,7 +815,7 @@ def create_readme(path, meta):
     content = f"# {meta['name']}\n\n"
     if meta.get("summary"):
         content += f"{meta['summary']}\n\n"
-    content += f"Category: {meta.get('category', '—')}\n"
+    content += f"Category: {meta.get('category', '-')}\n"
     content += f"Created: {meta['created_at'][:10]}\n"
     with open(path, "w") as f:
         f.write(content)
@@ -799,7 +837,7 @@ def setup_config():
     """Ask for the handful of settings that are personal to one machine, and
     write the config. Everything asked here has a sensible skip."""
     cfg = copy.deepcopy(DEFAULT_CONFIG)
-    print(f"\n{BOLD}Setting up proj{RESET}  {DIM}(Enter accepts the default){RESET}\n")
+    print(f"\n{BOLD}Setting up pb{RESET}  {DIM}(Enter accepts the default){RESET}\n")
 
     base = prompt_text("Where do your projects live?",
                        default=DEFAULT_CONFIG["base_directories"][0]["path"])
@@ -814,7 +852,7 @@ def setup_config():
 
     cfg["github_orgs"] = _prompt_list(
         "GitHub owners",
-        "Comma-separated usernames or orgs `proj new` can create repos under. "
+        "Comma-separated usernames or orgs `pb new` can create repos under. "
         "Leave blank to skip GitHub.")
     if cfg["github_orgs"]:
         cfg["default_github_org"] = cfg["github_orgs"][0]
@@ -827,7 +865,7 @@ def setup_config():
     ensure_dir(os.path.expanduser(base))
     save_config(cfg)
     print(f"\n{GREEN}Config written{RESET} to {CONFIG_PATH}")
-    print(f"  {DIM}Change it any time with `proj config edit`.{RESET}\n")
+    print(f"  {DIM}Change it any time with `pb config edit`.{RESET}\n")
     return cfg
 
 
@@ -857,7 +895,7 @@ def cmd_config(args):
 
     if action == "set":
         if not args.key or args.value is None:
-            print("Usage: proj config set <key> <value>")
+            print("Usage: pb config set <key> <value>")
             return
         cfg = load_config()
         key = args.key
@@ -963,7 +1001,7 @@ def cmd_new(args):
         elif first == "\x03":
             raise KeyboardInterrupt
         else:
-            # User started typing — collect the rest of the first line
+            # User started typing, so collect the rest of the first line
             sys.stdout.write(first)
             sys.stdout.flush()
             rest = input()
@@ -1075,7 +1113,7 @@ def cmd_new(args):
         print(f"  Repo:     {repo_url}")
     if adr_ok:
         adr_new_cmd, _ = _adr_commands(project_root, site=adr_site)
-        print(f"  ADR log:  docs/adr/ — add a record with `{adr_new_cmd}`")
+        print(f"  ADR log:  docs/adr/ (add a record with `{adr_new_cmd}`)")
 
     # 12. Offer to open in editor(s)
     if not args.no_notes:
@@ -1099,14 +1137,14 @@ def cmd_new(args):
     if not args.no_notes and prompt_confirm("Change into the new project directory?",
                                             default=True):
         # A child process cannot change the parent shell's directory, so the
-        # path is handed to the `proj` shell function via a drop file.
+        # path is handed to the `pb` shell function via a drop file.
         try:
             with open(CD_TARGET_PATH, "w") as f:
                 f.write(project_root)
         except OSError:
             pass
-        if not os.environ.get("PROJ_SHELL_WRAPPER"):
-            print(f"\n  {YELLOW}The `proj` shell function isn't active, so the "
+        if not os.environ.get("PB_SHELL_WRAPPER"):
+            print(f"\n  {YELLOW}The `pb` shell function isn't active, so the "
                   f"directory can't be changed for you.{RESET}")
             print(f"  Run {GREEN}bash install.sh && source ~/.zshrc{RESET} to enable it.")
             print(f"  For now:  {GREEN}cd {project_root}{RESET}")
@@ -1122,7 +1160,10 @@ def cmd_list(args):
     entries = load_index()
 
     if not entries:
-        print("No projects indexed. Run `proj new` to create one.")
+        if args.json:
+            print("[]")
+        else:
+            print("No projects indexed. Run `pb new` to create one.")
         return
 
     # Filter by status
@@ -1152,6 +1193,12 @@ def cmd_list(args):
     # Limit
     if args.limit:
         filtered = filtered[: args.limit]
+
+    if args.json:
+        # Emitted after filtering, sorting and limiting, so the JSON is exactly
+        # what the table would have shown. An empty result is a valid answer.
+        print(json.dumps([entry_as_json(e, cfg) for e in filtered], indent=2))
+        return
 
     if not filtered:
         print("No matching projects.")
@@ -1198,24 +1245,20 @@ def cmd_info(args):
     repo_url = get_repo_url(entry.get("project_root", ""))
 
     if args.json:
-        out = dict(entry)
-        out["status"] = compute_status(entry, cfg)
-        if repo_url:
-            out["repo_url"] = repo_url
-        print(json.dumps(out, indent=2))
+        print(json.dumps(entry_as_json(entry, cfg, repo_url), indent=2))
         return
 
     print(f"\n  Name:          {entry['name']}")
     print(f"  ID:            {entry['id']}")
     print(f"  Status:        {status_explanation(entry, cfg)}")
-    print(f"  Category:      {entry.get('category', '—')}")
-    print(f"  Summary:       {entry.get('summary', '—')}")
-    print(f"  Tags:          {', '.join(entry.get('tags', [])) or '—'}")
-    print(f"  Project Root:  {entry.get('project_root', '—')}")
-    print(f"  Docs:          {entry.get('docs_path', '—')}")
+    print(f"  Category:      {entry.get('category', '-')}")
+    print(f"  Summary:       {entry.get('summary', '-')}")
+    print(f"  Tags:          {', '.join(entry.get('tags', [])) or '-'}")
+    print(f"  Project Root:  {entry.get('project_root', '-')}")
+    print(f"  Docs:          {entry.get('docs_path', '-')}")
     if repo_url:
         print(f"  Repo:          {repo_url}")
-    print(f"  Base Dir:      {entry.get('base_directory', '—')}")
+    print(f"  Base Dir:      {entry.get('base_directory', '-')}")
     print(f"  Created:       {format_date(entry.get('created_at'))}")
     print(f"  Last Worked:   {format_date(entry.get('last_worked_at'))}")
     print(f"  Archived:      {entry.get('archived', False)}")
@@ -1443,7 +1486,7 @@ def _is_repo(path):
 
 
 def _disk_categories(base):
-    """List category directories under *base* — excludes repos and junk dirs."""
+    """List category directories under *base*. Excludes repos and junk dirs."""
     cats = []
     try:
         names = sorted(os.listdir(base))
@@ -1499,7 +1542,7 @@ def _rename_project_dir(entry, new_dir_name):
     if os.path.exists(new_root):
         try:
             if os.path.samefile(root, new_root):
-                # Case-only rename — two-step via temp name
+                # Case-only rename, done in two steps via a temp name
                 tmp = new_root + "_reslug_tmp"
                 os.rename(root, tmp)
                 os.rename(tmp, new_root)
@@ -1568,7 +1611,7 @@ def _scan_candidates(cfg, entries, ignored):
 
     Returns (candidates, misplaced, skipped). Candidates are dicts with path,
     name, category, base, tier and reason. Misplaced are repos sitting at
-    category level — projects belong one level deeper, inside a category.
+    category level. Projects belong one level deeper, inside a category.
     """
     indexed = set()
     for e in entries:
@@ -1593,7 +1636,7 @@ def _scan_candidates(cfg, entries, ignored):
             if cat_name in _SKIP_DIRS:
                 continue
 
-            # A repo at category level is misplaced. Never descend into it —
+            # A repo at category level is misplaced. Never descend into it:
             # its subdirectories are parts of that project, not projects.
             if _is_repo(cat_path):
                 if cat_path not in indexed and os.path.realpath(cat_path) not in indexed:
@@ -1662,19 +1705,19 @@ def _handle_misplaced(misplaced, cfg, entries, assume_yes):
     if not misplaced:
         return 0
 
-    print(f"\n{BOLD}Misplaced repos{RESET} — a project is sitting where a category "
+    print(f"\n{BOLD}Misplaced repos{RESET}: a project is sitting where a category "
           f"should be:")
     for m in misplaced:
         print(f"  {YELLOW}{m['name']}{RESET}  {DIM}({m['reason']}){RESET}")
         print(f"    {DIM}{m['path']}{RESET}")
 
     if assume_yes:
-        print(f"  {DIM}Left in place — rerun without --yes to move them.{RESET}")
+        print(f"  {DIM}Left in place. Rerun without --yes to move them.{RESET}")
         return 0
 
     moved = 0
     for m in misplaced:
-        print(f"\n  {BOLD}{m['name']}{RESET} — move it under a category?")
+        print(f"\n  {BOLD}{m['name']}{RESET}: move it under a category?")
         category = _prompt_category(m["base_path"])
         if not category:
             print(f"    {DIM}Skipped.{RESET}")
@@ -1683,7 +1726,7 @@ def _handle_misplaced(misplaced, cfg, entries, assume_yes):
         cat_path = os.path.join(m["base_path"], category)
         dest = os.path.join(cat_path, m["name"])
         if os.path.exists(dest):
-            print(f"    {YELLOW}{dest} already exists — skipped.{RESET}")
+            print(f"    {YELLOW}{dest} already exists, skipped.{RESET}")
             continue
         try:
             ensure_dir(cat_path)
@@ -1733,7 +1776,7 @@ def _review_candidates(candidates, cfg, entries, ignored, assume_yes):
                 added += 1
         unsure = [c for c in candidates if c["tier"] != "strong"]
         if unsure:
-            print(f"\n  {DIM}{len(unsure)} unclear folder(s) left alone — "
+            print(f"\n  {DIM}{len(unsure)} unclear folder(s) left alone, "
                   f"rerun without --yes to review them.{RESET}")
         return added, 0
 
@@ -1779,7 +1822,7 @@ def _review_candidates(candidates, cfg, entries, ignored, assume_yes):
         print(f"  Ignore {len(to_ignore)}: {', '.join(c['name'] for c in to_ignore[:6])}"
               f"{' …' if len(to_ignore) > 6 else ''}")
     if not prompt_confirm("Apply?", default=True):
-        print("  Cancelled — nothing written.")
+        print("  Cancelled. Nothing written.")
         return 0, 0
 
     for c in to_add:
@@ -1802,7 +1845,7 @@ def _flag_indexed_entry(entry, include_unsure=False):
     if not root or not os.path.isdir(root):
         return None  # handled by --prune
     if entry.get("initial_prompt_path"):
-        return None  # created deliberately via `proj new`
+        return None  # created deliberately via `pb new`
     name = os.path.basename(root)
     if name in _SKIP_DIRS:
         return "dependency or build folder"
@@ -1831,7 +1874,7 @@ def _review_indexed(cfg, entries, ignored, include_unsure=False):
         print("Every indexed project still looks like a project. Nothing to review.")
         if unsure_held:
             print(f"  {DIM}{unsure_held} entr{'y has' if unsure_held == 1 else 'ies have'} "
-                  f"no project markers — 'proj rescan --review -v' to review those too.{RESET}")
+                  f"no project markers. 'pb rescan --review -v' reviews those too.{RESET}")
         return entries
 
     if len(flagged) == 1:
@@ -1843,7 +1886,7 @@ def _review_indexed(cfg, entries, ignored, include_unsure=False):
     print(f"  {DIM}Files on disk are never deleted.{RESET}")
     if unsure_held:
         verb = "has" if unsure_held == 1 else "have"
-        print(f"  {DIM}({unsure_held} more {verb} no project markers — "
+        print(f"  {DIM}({unsure_held} more {verb} no project markers, "
               f"add -v to review those too.){RESET}")
 
     remove_ids, ignore_paths = set(), []
@@ -1880,7 +1923,7 @@ def _review_indexed(cfg, entries, ignored, include_unsure=False):
     print(f"\n  Remove {len(remove_ids)} entr{'y' if len(remove_ids) == 1 else 'ies'} "
           f"from the index ({len(ignore_paths)} also ignored).")
     if not prompt_confirm("Apply?", default=True):
-        print("  Cancelled — nothing written.")
+        print("  Cancelled. Nothing written.")
         return entries
 
     kept = [e for e in entries if e["id"] not in remove_ids]
@@ -1903,11 +1946,11 @@ def _review_indexed(cfg, entries, ignored, include_unsure=False):
             continue
         base_entry = _base_for_path(cfg, parent)
         if not base_entry:
-            print(f"    {DIM}Not inside a configured base directory — skipped.{RESET}")
+            print(f"    {DIM}Not inside a configured base directory, skipped.{RESET}")
             continue
         base_root = os.path.expanduser(base_entry["path"])
         if os.path.dirname(parent) == base_root:
-            # The parent is itself sitting at category level — move it first.
+            # The parent is itself sitting at category level, so move it first.
             moved = _handle_misplaced([{
                 "path": parent, "name": os.path.basename(parent),
                 "base": base_entry["name"], "base_path": base_root,
@@ -1953,7 +1996,7 @@ def cmd_rescan(args):
             print(f"Found {len(missing)} project(s) whose directories no longer exist:")
             for e in missing:
                 print(f"  {e['id']}: {e['name']} ({e.get('project_root', '')})")
-            print("Run with --prune to remove them, or use 'proj delete <query>'.")
+            print("Run with --prune to remove them, or use 'pb delete <query>'.")
 
     # Review indexed entries that no longer look like projects
     if args.review:
@@ -1978,7 +2021,7 @@ def cmd_rescan(args):
                 print(f"  RENAME:  {old_dir_name} → {new_dir_name}")
                 reslug_count += 1
             else:
-                print(f"  SKIP:    {entry['name']} — target already exists")
+                print(f"  SKIP:    {entry['name']}: target already exists")
                 reslug_skipped += 1
         if reslug_count or reslug_skipped:
             print(f"Reslugged {reslug_count} project(s).")
@@ -1989,7 +2032,7 @@ def cmd_rescan(args):
 
     # Reslug check: interactive review of each project directory name
     if args.reslug_check:
-        print("Reslug check — review each project directory name.")
+        print("Reslug check. Review each project directory name.")
         print("Enter=accept proposed, type a custom slug, or s=skip.\n")
         renames = []
         n = 0
@@ -2067,7 +2110,7 @@ def cmd_rescan(args):
             elif args.verbose:
                 print(f"  OK:      {entry['name']}")
 
-    # Discover unindexed projects — proposes, then writes only on confirmation
+    # Discover unindexed projects: proposes, then writes only on confirmation
     if args.discover:
         ignored = load_ignored()
         candidates, misplaced, skipped = _scan_candidates(cfg, entries, ignored)
@@ -2081,7 +2124,7 @@ def cmd_rescan(args):
         if added:
             print(f"\nAdded {added} project(s) to the index.")
         if newly_ignored:
-            print(f"Ignored {newly_ignored} folder(s) — they won't come up again.")
+            print(f"Ignored {newly_ignored} folder(s). They won't come up again.")
         if moved:
             print(f"Moved {moved} misplaced repo(s) into a category.")
         if skipped and args.verbose:
@@ -2129,7 +2172,7 @@ def cmd_ignore(args):
     # Default: ignore by query (ID, name, path)
     query = args.query
     if not query:
-        print("Usage: proj ignore <query>  or  proj ignore --list")
+        print("Usage: pb ignore <query>  or  pb ignore --list")
         return
 
     entry = find_entry(entries, query)
@@ -2181,7 +2224,7 @@ def cmd_delete(args):
 
     query = args.query
     if not query:
-        print("Usage: proj delete <query>")
+        print("Usage: pb delete <query>")
         return
 
     entry = find_entry(entries, query)
@@ -2216,7 +2259,7 @@ def cmd_delete(args):
 
 
 # ---------------------------------------------------------------------------
-# Ideas — display helpers
+# Ideas: display helpers
 # ---------------------------------------------------------------------------
 
 
@@ -2243,7 +2286,7 @@ def _idea_list(ideas, entries, project_filter=None):
     done_ideas = [i for i in filtered if i.get("done")]
 
     if not open_ideas and not done_ideas:
-        print("No ideas recorded yet. Run `proj idea` to capture one.")
+        print("No ideas recorded yet. Run `pb idea` to capture one.")
         return
 
     # Group open ideas by project
@@ -2277,10 +2320,10 @@ def _idea_list(ideas, entries, project_filter=None):
         if len(done_ideas) > 5:
             print(f"    {DIM}... and {len(done_ideas) - 5} more{RESET}")
 
-    # Usage hint — the ID belongs to `proj idea`, not to `proj` itself
+    # Usage hint: the ID belongs to `pb idea`, not to `pb` itself
     if open_ideas:
-        print(f"\n  {DIM}Mark done: {GREEN}proj idea -d <id>{RESET}"
-              f"{DIM}    Delete: {GREEN}proj idea --delete <id>{RESET}")
+        print(f"\n  {DIM}Mark done: {GREEN}pb idea -d <id>{RESET}"
+              f"{DIM}    Delete: {GREEN}pb idea --delete <id>{RESET}")
     print()
 
 
@@ -2349,9 +2392,9 @@ def cmd_idea(args):
         _idea_delete(ideas, args.delete)
         return
 
-    # Capture mode — pick type first
-    cat_labels = [f"{emoji}  {name} — {desc}" for _, emoji, name, desc in IDEA_CATEGORIES]
-    new_app_label = "🚀  New App — idea for a brand new project"
+    # Capture mode: pick type first
+    cat_labels = [f"{emoji}  {name}: {desc}" for _, emoji, name, desc in IDEA_CATEGORIES]
+    new_app_label = "🚀  New App: idea for a brand new project"
     all_labels = cat_labels + [new_app_label]
     chosen_label = prompt_choice("Type", all_labels)
 
@@ -2372,7 +2415,7 @@ def cmd_idea(args):
                 return
         else:
             if not entries:
-                print("No projects tracked. Run `proj new` first.")
+                print("No projects tracked. Run `pb new` first.")
                 return
             cats = sorted({e.get("category", "") for e in entries if e.get("category")})
             if len(cats) > 1:
@@ -2437,21 +2480,21 @@ def cmd_idea(args):
 
 
 # ---------------------------------------------------------------------------
-# Command: adr — scaffold an Architecture Decision Record log
+# Command: adr, scaffold an Architecture Decision Record log
 # ---------------------------------------------------------------------------
 
 LOG4BRAINS_VERSION = "1.1.0"
 
 ADR_TEMPLATE_MD = """\
-# [short title of the decision — a noun phrase, e.g. "Trunk-based deploy via GitHub Actions"]
+# [short title of the decision: a noun phrase, e.g. "Trunk-based deploy via GitHub Actions"]
 
 - Status: [draft | proposed | accepted | rejected | deprecated | superseded by [YYYYMMDD-xxx](yyyymmdd-xxx.md)]
 - Deciders: [who made the call]
 - Date: [YYYY-MM-DD when the decision was made or last updated]
-- Tags: [space/comma separated — e.g. deploy, data, styling, payments, infra]
+- Tags: [space/comma separated, e.g. deploy, data, styling, payments, infra]
 
 <!--
-AGENT GUIDANCE — read before writing an ADR here:
+AGENT GUIDANCE, read before writing an ADR here:
 - One decision per file. Two choices = two ADRs.
 - ADRs are IMMUTABLE. Never rewrite an accepted one to reflect a new decision.
   Instead: create a new ADR and set this one's Status to "superseded by [link]",
@@ -2514,7 +2557,7 @@ decision: the context, the options weighed, the choice, and its consequences.
   one's `## Links`. Flipping the status and adding that link is the only edit an accepted ADR
   should ever get.
 - **Record the rejected options and why.** The "why not" is the most valuable part.
-- A decision that is **decided but not yet shipped** is a valid ADR — set `Status: proposed`.
+- A decision that is **decided but not yet shipped** is a valid ADR. Set `Status: proposed`.
 
 See `template.md` for the full format.
 
@@ -2522,23 +2565,23 @@ See `template.md` for the full format.
 
 {{more_info}}- [ADR GitHub organization](https://adr.github.io/)
 
-<!-- Scaffolded by `proj adr init`. -->
+<!-- Scaffolded by `pb adr init`. -->
 """
 
 ADR_INDEX_MD = """\
 <!-- This file is the homepage of the Log4brains knowledge base. Edit freely. -->
 
-# {{name}} — Architecture knowledge base
+# {{name}}: Architecture knowledge base
 
 Welcome 👋 to the architecture decision log for **{{name}}**.
 
 You'll find here the Architecture Decision Records (ADRs) that got this project to where it is
-now — the reasoning behind the choices, including the ones that were reversed.
+now, the reasoning behind the choices, including the ones that were reversed.
 
 ## Why this exists
 
 An ADR captures one architecturally-significant decision: the context, the options weighed, the
-choice, and its consequences. An ADR is **immutable** — once accepted you don't rewrite it, you
+choice, and its consequences. An ADR is **immutable**. Once accepted you don't rewrite it, you
 supersede it with a new one and link the two. Read the log in date order and you get the whole
 story, including the reversals.
 
@@ -2564,18 +2607,18 @@ description: Record or supersede an Architecture Decision Record (ADR) for {{nam
 # adr
 
 The {{name}} decision log lives in `docs/adr/`. It is the project's memory of **why** things are
-the way they are. Before changing anything architectural, read the relevant ADRs first — they
+the way they are. Before changing anything architectural, read the relevant ADRs first. They
 exist to stop a settled decision being silently re-litigated or reversed.
 
 ## When to invoke
 
 When the user types `/adr`, or asks to "record a decision", "write an ADR", or "supersede an
-ADR" — and whenever you (an agent) make an architecturally-significant, durable choice worth
+ADR", and whenever you (an agent) make an architecturally-significant, durable choice worth
 recording.
 
 ## When to write one
 
-Write an ADR when a choice is **architecturally significant and durable** — it constrains future
+Write an ADR when a choice is **architecturally significant and durable**: it constrains future
 work, or a newcomer would otherwise re-argue it. Examples: the deploy model, the state/data/
 styling standard, an auth or payments decision, a build-tooling choice, a reversal of a previous
 approach. Do NOT write one for a routine feature or a bugfix.
@@ -2588,7 +2631,7 @@ log.
 Fill in the MADR sections (see `docs/adr/template.md`): Context and Problem Statement, Considered
 Options, Decision Outcome (start with `Chosen option: "..."`), Consequences.
 
-- **Record the rejected options and why** — the "why not" is the most valuable part.
+- **Record the rejected options and why**. The "why not" is the most valuable part.
 - **Ground every claim** in a commit SHA, `file:line`, a release tag, or a doc. Never invent
   rationale.
 - **Verify it actually shipped** before recording it as `accepted`.
@@ -2600,8 +2643,8 @@ Options, Decision Outcome (start with `Chosen option: "..."`), Consequences.
   1. Create a new ADR for the new decision (status `accepted`).
   2. In the new ADR's `## Links`, add `Supersedes [YYYYMMDD-old](YYYYMMDD-old.md)`.
   3. In the OLD ADR, change `Status:` to `superseded by [YYYYMMDD-new](YYYYMMDD-new.md)`.
-  This is the ONLY edit you may make to an accepted ADR — flipping its status and adding the link.
-- A decision that was **decided but not yet shipped** is a valid ADR — set `Status: proposed`.
+  This is the ONLY edit you may make to an accepted ADR: flipping its status and adding the link.
+- A decision that was **decided but not yet shipped** is a valid ADR. Set `Status: proposed`.
 """
 
 ADR_CREATING_SITE = """\
@@ -2614,7 +2657,7 @@ ADR_CREATING_SITE = """\
 
 These run [log4brains](https://github.com/thomvaill/log4brains) via `npx` (pinned to
 {{l4b_version}}), so **nothing is added to this project's dependency tree**. Node is only needed
-for browsing and for the auto-numbered filename — the records themselves are plain markdown you
+for browsing and for the auto-numbered filename. The records themselves are plain markdown you
 can write by hand.
 """
 
@@ -2629,7 +2672,7 @@ That copies `template.md` to `docs/adr/YYYYMMDD-slug.md` with the title and date
 records are plain markdown, so writing the file by hand works just as well.
 
 There is no website here by design: read the log in your editor, in date order. If this project
-ever grows enough records to want a searchable site, `proj adr init --site` adds
+ever grows enough records to want a searchable site, `pb adr init --site` adds
 [log4brains](https://github.com/thomvaill/log4brains) over the top without renaming or rewriting
 anything.
 """
@@ -2698,12 +2741,12 @@ def _detect_pkg_runner(project_root):
 def _adr_commands(project_root, site=True):
     """Return (new_cmd, serve_cmd) for the project's ADR log.
 
-    Without the log4brains site, `proj` writes the records itself and there is
+    Without the log4brains site, `pb` writes the records itself and there is
     nothing to serve. With it, prefer package scripts over raw npx when the
     project has a package.json to hang them off.
     """
     if not site:
-        return 'proj adr new "<title>"', None
+        return 'pb adr new "<title>"', None
     runner = _detect_pkg_runner(project_root)
     if runner:
         return f"{runner} adr:new", f"{runner} adr:serve"
@@ -2850,11 +2893,11 @@ def scaffold_adr(project_root, name, force=False, with_skill=True, quiet=False, 
     if serve_cmd:
         print(f"  Browse the log:   {CYAN}{serve_cmd}{RESET}")
         if scripts_added is None:
-            print(f"  {DIM}No package.json found — the commands above run log4brains "
+            print(f"  {DIM}No package.json found, so the commands above run log4brains "
                   f"directly.{RESET}")
     else:
         print(f"  {DIM}Plain markdown, no website. Add one later with "
-              f"`proj adr init --site`.{RESET}")
+              f"`pb adr init --site`.{RESET}")
     return True
 
 
@@ -2900,7 +2943,7 @@ def cmd_adr(args):
         _adr_new(args)
         return
 
-    entry = _adr_entry(args.query, "proj adr init <id|name>")
+    entry = _adr_entry(args.query, "pb adr init <id|name>")
     if not entry:
         return
 
@@ -2917,10 +2960,10 @@ def _adr_new(args):
     """Create one ADR record from the project's template."""
     title = (args.query or "").strip()
     if not title:
-        print('Usage: proj adr new "<title>"')
+        print('Usage: pb adr new "<title>"')
         return
 
-    entry = _adr_entry(args.project, 'proj adr new "<title>" -p <id|name>')
+    entry = _adr_entry(args.project, 'pb adr new "<title>" -p <id|name>')
     if not entry:
         return
 
@@ -2928,7 +2971,7 @@ def _adr_new(args):
     adr_dir = os.path.join(project_root, "docs", "adr")
     template_path = os.path.join(adr_dir, "template.md")
     if not os.path.isfile(template_path):
-        print(f"No ADR log in {entry['name']} yet. Run `proj adr init` first.")
+        print(f"No ADR log in {entry['name']} yet. Run `pb adr init` first.")
         return
 
     with open(template_path) as f:
@@ -2955,10 +2998,10 @@ def _adr_new(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="proj",
+        prog="pb",
         description="Local CLI for creating, finding, and managing projects.",
     )
-    parser.add_argument("--version", action="version", version=f"proj {VERSION}")
+    parser.add_argument("--version", action="version", version=f"pb {VERSION}")
     sub = parser.add_subparsers(dest="command")
 
     # config
@@ -2996,6 +3039,8 @@ def build_parser():
     p_list.add_argument("--reverse", "-r", action="store_true",
                         help="Reverse sort order (default is desc by last_worked)")
     p_list.add_argument("--short", action="store_true", help="Compact output")
+    p_list.add_argument("--json", action="store_true",
+                        help="Output as JSON, for scripts and agents")
 
     # info
     p_info = sub.add_parser("info", help="Show project details")
@@ -3096,6 +3141,8 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    migrate_legacy_dir()
 
     if not args.command:
         print_welcome()

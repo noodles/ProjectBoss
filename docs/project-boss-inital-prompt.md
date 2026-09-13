@@ -329,7 +329,7 @@ Clear expectations for status:
 - Status should reflect **time since last meaningful work**, not just time since creation.
 - Default thresholds:
   - `active`: last worked under 14 days ago.
-  - `stale`: 14–90 days.
+  - `stale`: 14 to 90 days.
   - `archived`: 90+ days OR explicitly archived.
 
 User experience details:
