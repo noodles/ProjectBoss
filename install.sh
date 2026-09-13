@@ -4,7 +4,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PB_PY="$SCRIPT_DIR/pb.py"
 BIN_DIR="$HOME/bin"
-SYMLINK="$BIN_DIR/pb.py"
+SYMLINK="$BIN_DIR/pb"
 PB_DIR="$HOME/.pb"
 ZSHRC="$HOME/.zshrc"
 
@@ -48,11 +48,12 @@ fi
 
 # 5b. Clean up the previous name. The tool used to be `proj`, and leaving its
 #     symlink and shell function behind means a broken `proj` command forever.
-LEGACY_LINK="$BIN_DIR/proj.py"
-if [ -L "$LEGACY_LINK" ]; then
-    rm "$LEGACY_LINK"
-    echo "Removed the old symlink: $LEGACY_LINK"
-fi
+for LEGACY_LINK in "$BIN_DIR/proj.py" "$BIN_DIR/pb.py"; do
+    if [ -L "$LEGACY_LINK" ]; then
+        rm "$LEGACY_LINK"
+        echo "Removed the old symlink: $LEGACY_LINK"
+    fi
+done
 LEGACY_START="# >>> proj shell function >>>"
 LEGACY_END="# <<< proj shell function <<<"
 if grep -q "$LEGACY_START" "$ZSHRC" 2>/dev/null; then
@@ -82,35 +83,12 @@ else
     echo "Adding shell function to $ZSHRC..."
 fi
 
-cat >> "$ZSHRC" << 'SHELL_FUNC'
-
-# >>> pb shell function >>>
-pb() {
-    # PB_SHELL_WRAPPER lets pb.py know it can hand back a directory to cd into.
-    if [[ "$1" == "open" && "$2" != "--help" && "$2" != "-h" ]]; then
-        local target
-        target=$(PB_SHELL_WRAPPER=1 command python3 ~/bin/pb.py open "${@:2}" --path-only 2>/dev/null)
-        if [[ $? -eq 0 && -n "$target" && -d "$target" ]]; then
-            cd "$target" && echo "Opened: $target"
-        else
-            PB_SHELL_WRAPPER=1 command python3 ~/bin/pb.py open "${@:2}"
-        fi
-    else
-        PB_SHELL_WRAPPER=1 command python3 ~/bin/pb.py "$@"
-    fi
-    # Handle cd-target signal from pb new
-    local cd_target="$HOME/.pb/.cd_target"
-    if [[ -f "$cd_target" ]]; then
-        local dest
-        dest=$(<"$cd_target")
-        rm -f "$cd_target"
-        if [[ -n "$dest" && -d "$dest" ]]; then
-            cd "$dest"
-        fi
-    fi
-}
-# <<< pb shell function <<<
-SHELL_FUNC
+{
+    echo
+    echo "$START_MARKER"
+    cat "$SCRIPT_DIR/shell/pb.zsh"
+    echo "$END_MARKER"
+} >> "$ZSHRC"
 echo "Shell function installed."
 
 # 7. Offer the Claude Code skill. Opt-in: a project CLI has no business writing
