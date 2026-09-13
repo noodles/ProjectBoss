@@ -5,6 +5,9 @@
 - Add a test suite: 85 tests in `test_proj.py`, stdlib `unittest`, no dependencies. Run with `python3 -m unittest discover`. Covers slugging, status thresholds, query resolution, ID allocation, frontmatter, remote-URL parsing, discovery classification, index review, the ignore list, the data layer, template rendering, and both ADR modes
 - Fix `is_ignored` comparing paths case-sensitively. It used `os.path.normcase`, which is a no-op on everything except Windows, so the case-insensitive matching the code claimed to do never happened: a path typed into `proj ignore` with different casing to the one on disk silently failed to match. It now casefolds, and compares realpaths on both sides so a symlink matches its target either way round
 - Every test that touches disk uses a temp directory, and the data-layer tests repoint proj's module paths, so a test run can never read or write the real `~/.proj`
+- Run the tests in CI: a GitHub Actions workflow on push and pull request, against Python 3.9 and 3.13 on macOS. macOS because `proj` shells out to `open` and `pbpaste` and the installer writes to `~/.zshrc`, so a Linux run would pass while proving nothing; 3.9 because that is the `python3` macOS ships
+- Rewrite the README opening. It led with one line of description and then a command reference, which told a visitor nothing about why they would want the tool. It now opens with the problem, real `proj list` output, and the three things that are actually distinctive: computed status, discovery, and review
+- `.gitignore` no longer ignores all of `docs/`, which meant the project could never commit its own documentation. It now ignores only the generated per-project prompt files
 
 ## 0.7.0
 
