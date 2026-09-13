@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
 
 # CalVer: YYYY.MM.PATCH, zero-padded month. It carries no compatibility signal,
 # so a change to the on-disk index format is called out in the changelog.
-VERSION = "2026.09.2"
+VERSION = "2026.09.3"
 
 # ANSI color support, disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -839,10 +839,17 @@ def create_readme(path, meta):
 # ---------------------------------------------------------------------------
 
 
+def _ask(prompt):
+    """Ask a question. The prompt goes to stderr, because first-run setup can
+    fire during a --json command and stdout has to stay parseable."""
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return input().strip()
+
+
 def _prompt_list(label, hint):
     """Prompt for a comma-separated list. Empty input means an empty list."""
-    print(f"  {DIM}{hint}{RESET}")
-    raw = input(f"{label}: ").strip()
+    print(f"  {DIM}{hint}{RESET}", file=sys.stderr)
+    raw = _ask(f"{label}: ")
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
@@ -850,10 +857,11 @@ def setup_config():
     """Ask for the handful of settings that are personal to one machine, and
     write the config. Everything asked here has a sensible skip."""
     cfg = copy.deepcopy(DEFAULT_CONFIG)
-    print(f"\n{BOLD}Setting up pb{RESET}  {DIM}(Enter accepts the default){RESET}\n")
+    print(f"\n{BOLD}Setting up pb{RESET}  {DIM}(Enter accepts the default){RESET}\n",
+          file=sys.stderr)
 
-    base = prompt_text("Where do your projects live?",
-                       default=DEFAULT_CONFIG["base_directories"][0]["path"])
+    fallback = DEFAULT_CONFIG["base_directories"][0]["path"]
+    base = _ask(f"Where do your projects live? [{fallback}]: ") or fallback
     cfg["base_directories"] = [{"name": "default", "path": base}]
 
     cfg["categories"] = _prompt_list(
@@ -871,14 +879,16 @@ def setup_config():
         cfg["default_github_org"] = cfg["github_orgs"][0]
 
     print(f"  {DIM}Apps to open projects and prompts with, by name as macOS "
-          f"knows them (Zed, VS Code, Typora). Blank uses the OS default.{RESET}")
-    cfg["project_editor"] = input("Project editor: ").strip()
-    cfg["prompt_editor"] = input("Prompt editor: ").strip()
+          f"knows them (Zed, VS Code, Typora). Blank uses the OS default.{RESET}",
+          file=sys.stderr)
+    cfg["project_editor"] = _ask("Project editor: ")
+    cfg["prompt_editor"] = _ask("Prompt editor: ")
 
     ensure_dir(os.path.expanduser(base))
     save_config(cfg)
-    print(f"\n{GREEN}Config written{RESET} to {CONFIG_PATH}")
-    print(f"  {DIM}Change it any time with `pb config edit`.{RESET}\n")
+    print(f"\n{GREEN}Config written{RESET} to {CONFIG_PATH}", file=sys.stderr)
+    print(f"  {DIM}Change it any time with `pb config edit`.{RESET}\n",
+          file=sys.stderr)
     return cfg
 
 
@@ -3195,7 +3205,13 @@ def main():
     # since `config init` IS the setup and `config show` has to stay readable.
     if (not os.path.isfile(CONFIG_PATH) and args.command != "config"
             and sys.stdin.isatty()):
-        setup_config()
+        # A terminal can still be unreadable: a pty with nothing on the other
+        # end, a detached process, a CI runner. Fall back rather than crash.
+        try:
+            setup_config()
+        except (EOFError, OSError):
+            print("  No answers available, using defaults. "
+                  "Run `pb config init` to set it up.", file=sys.stderr)
 
     handler(args)
 

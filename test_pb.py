@@ -14,8 +14,10 @@ import datetime
 import io
 import json
 import os
+import pty
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -689,6 +691,33 @@ class TestJsonShape(unittest.TestCase):
         e = entry()
         pb.entry_as_json(e, self.cfg)
         self.assertNotIn("status", e)
+
+
+class TestSetupFallsBackWhenInputIsUnreadable(TempDirCase):
+    """A terminal attached does not mean a terminal that can be read."""
+
+    def run_list(self, stdin):
+        env = dict(os.environ, HOME=self.tmp)
+        return subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "pb.py"), "list", "--json"],
+            stdin=stdin, capture_output=True, text=True, env=env, timeout=30)
+
+    def test_closed_stdin_does_not_crash(self):
+        with open(os.devnull) as devnull:
+            out = self.run_list(devnull)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "[]")
+
+    def test_a_pty_with_nothing_to_read_does_not_crash(self):
+        parent, child = pty.openpty()
+        try:
+            os.close(parent)  # nothing will ever be written: reads raise EIO
+            out = self.run_list(child)
+        finally:
+            os.close(child)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "[]")
 
 
 class TestMigrationNoticeGoesToStderr(TempDirCase):
