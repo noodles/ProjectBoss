@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0
+
+- `proj new` now offers to create a GitHub repo after `git init`, choosing the owner from a new `github_orgs` list in the config with `default_github_org` pre-selected. Personal accounts and organisations are the same thing to `gh`, so both live in the one list
+- The repo is created private with `origin` set and pushed. `gh repo create --push` has nothing to push from an empty repo, so an initial commit is made first when the project has none
+- Add `proj new --org <owner>` to skip the prompt and `proj new --no-remote` to stay local. Under `--no-notes` a repo is created only when `--org` is given, so unattended runs never publish by accident
+- Every failure along the way (staging, committing, `gh`) prints the underlying error and leaves the project intact rather than failing silently
+- `git init` now passes `--initial-branch=main`. Without a global `init.defaultBranch` set, every project `proj new` created started on `master` and pushed that to GitHub as the default branch
+
+## 0.3.0
+
+- `proj rescan --discover` now proposes instead of writing. Previously it added every directory it walked past straight to the index and printed the result as a receipt; it now reviews candidates with you and saves only on confirmation
+- Discovery skips dependency and build directories (`node_modules`, `dist`, `build`, `.venv`, `target`, …). The skip list already existed but was only used for mtime walks, never for discovery
+- Candidates are classified by evidence found inside them: `.git` or a build manifest means project, `README.md`/`docs/`/`src/` alone means maybe, nothing means probably not. The suggested action follows the classification and Enter accepts it
+- A repo sitting at category level is treated as misplaced rather than descended into — discovery offers to move it under a category, indexes it as one project, and repoints existing index entries at the new location
+- Moving a repo into a category adds that category to the config list if it's missing
+- Add `proj rescan --review` to apply the same tests to entries already in the index, flagging dependency folders and subfolders of a project. Removes from the index only — never deletes files — and offers to index the real parent project
+- `--review` holds back "no project markers" judgement calls by default (reporting the count) and includes them with `-v`; entries created via `proj new` are never flagged
+- Add `proj rescan --discover --yes` for non-interactive use: adds only candidates with conclusive evidence, leaves the rest alone
+- `_base_for_path` compares absolute paths, so a relative or non-normalised base directory in the config still matches index entries
+
 ## 0.2.1
 
 - Fix the welcome logo rendering "Project" with the `j` looking like an `i` — the figlet descender row was missing

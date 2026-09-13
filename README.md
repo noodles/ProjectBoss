@@ -26,9 +26,21 @@ Create a new project interactively or with flags.
 proj new                              # interactive
 proj new --name "My Project" -c Noodle -s "A cool thing" --no-notes
 proj new --adr                        # also scaffold an ADR decision log
+proj new -o momentous-developments    # pick the GitHub owner up front
+proj new --no-remote                  # local git only, no GitHub repo
 ```
 
 Creates: `{base}/{category}/{slug}/docs/` with initial prompt and README.
+
+After `git init` it offers to create a GitHub repo. The owner comes from the
+`github_orgs` list in `~/.proj/config.json`, with `default_github_org`
+pre-selected; a personal account is just another entry in that list. The repo is
+created private, an initial commit is made if the project has none, and `origin`
+is set and pushed.
+
+`--org` skips the prompt and uses that owner. `--no-remote` skips GitHub
+entirely. With `--no-notes`, a repo is only created when `--org` is given, so an
+unattended run never publishes anything by accident.
 
 ### `proj list`
 
@@ -80,11 +92,27 @@ Update timestamps from filesystem and discover unindexed projects. Follows symli
 
 ```bash
 proj rescan                           # update timestamps
-proj rescan --discover                # also find unindexed projects in base dirs
-proj rescan --discover --verbose      # show each discovered project
+proj rescan --discover                # review unindexed folders, add the real projects
+proj rescan --discover --yes          # add obvious projects without prompting
+proj rescan --review                  # re-check entries already in the index
+proj rescan --review -v               # also review folders with no project markers
 ```
 
 Use `--discover` after initial install to import all your existing projects.
+
+**How discovery decides what's a project.** Projects live at `<base>/<category>/<project>`. Discovery skips dependency and build folders (`node_modules`, `dist`, `build`, `.venv`, `target`, …), then looks inside each remaining folder for evidence:
+
+| Evidence | Verdict |
+|---|---|
+| `.git`, or a manifest (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, …) | looks like a project — suggested `add` |
+| Only `README.md`, `docs/`, `src/`, `CLAUDE.md` | might be — suggested `add` |
+| Nothing | probably not — suggested `ignore` |
+
+Nothing is written until you confirm. Answer `a` to add, `i` to ignore permanently, `s` to skip, or `q` to stop; Enter accepts the suggestion. `--yes` skips the review and adds only the folders with conclusive evidence.
+
+**Misplaced repos.** A repo sitting at category level (e.g. `01_Projects/my-app/` with a `.git` in it) is in the wrong place — its subfolders are parts of one project, not separate projects. Discovery never descends into it. Instead it offers to move the repo under a category, indexes it as a single project, and repoints any existing index entries at the new location.
+
+**`--review`** applies the same tests to what's already indexed. By default it only raises conclusive problems — dependency folders and subfolders of a project — and reports how many "no project markers" judgement calls it held back; add `-v` to review those too. Projects you created with `proj new` are never flagged. Answer `r` to remove from the index, `i` to remove and ignore, `k` to keep. Files on disk are never deleted. When you remove subfolders of a project that isn't itself indexed, it offers to index the real project.
 
 ### `proj ignore`
 
@@ -159,6 +187,16 @@ Status is computed dynamically from `last_worked_at`:
 - **archived**: 90+ days or manually archived
 
 Thresholds are configurable in `~/.proj/config.json`.
+
+## GitHub owners
+
+```json
+"github_orgs": ["noodles", "momentous-developments", "NVE-Team"],
+"default_github_org": "noodles"
+```
+
+`proj new` offers these when creating a repo. Personal accounts and
+organisations are interchangeable here: `gh` treats both as an owner.
 
 ## Data
 

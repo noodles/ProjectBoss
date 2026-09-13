@@ -48,6 +48,11 @@ DEFAULT_CONFIG = {
         "Julia", "Nooduino", "NoosaQueen", "STAT",
     ],
     "default_category": "Noodle",
+    "github_orgs": [
+        "noodles", "momentous-developments", "NVE-Team",
+        "kitly-co", "momentous-labs", "soba-solutions",
+    ],
+    "default_github_org": "noodles",
     "status_thresholds": {
         "stale_after_days": 14,
         "archived_after_days": 90,
@@ -60,7 +65,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.2.1"
+VERSION = "0.4.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -521,6 +526,45 @@ def _create_gh_issue(project_root, title, body, label):
         return None
 
 
+def _create_gh_repo(project_root, owner, slug):
+    """Create a private GitHub repo under *owner* and push the first commit.
+
+    `gh repo create --push` has nothing to push from an empty repo, so a
+    commit is made first when none exists. Returns the repo URL, or None.
+    """
+    def _run(cmd, timeout=30):
+        return subprocess.run(
+            cmd, cwd=project_root, capture_output=True, text=True, timeout=timeout,
+        )
+
+    def _fail(what, result):
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        print(f"  {YELLOW}Could not {what}:{RESET} {detail[0] if detail else 'unknown error'}")
+        return None
+
+    try:
+        if _run(["git", "rev-parse", "HEAD"], timeout=5).returncode != 0:
+            add = _run(["git", "add", "-A"])
+            if add.returncode != 0:
+                return _fail("stage the first commit", add)
+            commit = _run(["git", "commit", "-m", "Initial commit"])
+            if commit.returncode != 0:
+                return _fail("make the first commit", commit)
+
+        created = _run(
+            ["gh", "repo", "create", f"{owner}/{slug}", "--private",
+             "--source", ".", "--remote", "origin", "--push"],
+            timeout=90,
+        )
+        if created.returncode != 0:
+            return _fail("create the GitHub repo", created)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"  {YELLOW}Could not create the GitHub repo:{RESET} {exc}")
+        return None
+
+    return get_repo_url(project_root)
+
+
 # ---------------------------------------------------------------------------
 # Config management
 # ---------------------------------------------------------------------------
@@ -920,13 +964,29 @@ def cmd_new(args):
     if prompt_confirm("Initialise git repository?", default=True):
         try:
             subprocess.run(
-                ["git", "init"],
+                ["git", "init", "--initial-branch=main"],
                 cwd=project_root,
                 check=True, capture_output=True,
             )
             git_ok = True
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"  Warning: could not initialise git repo: {exc}")
+
+    # 8a. Create the GitHub repo and push the first commit
+    repo_url = None
+    if git_ok and not args.no_remote:
+        owner = args.org
+        if not owner and not args.no_notes:
+            # Non-interactive runs only publish when --org says so explicitly.
+            if not _gh_available():
+                print(f"  {DIM}Skipping GitHub: `gh` is not installed or not logged in.{RESET}")
+            elif prompt_confirm("Create GitHub repo?", default=True):
+                orgs = cfg.get("github_orgs", [])
+                default_org = cfg.get("default_github_org")
+                owner = (prompt_choice("GitHub owner", orgs, default=default_org)
+                         if orgs else prompt_text("GitHub owner", default=default_org))
+        if owner:
+            repo_url = _create_gh_repo(project_root, owner, slug)
 
     # 9. Optional ADR decision log
     adr_ok = False
@@ -962,6 +1022,8 @@ def cmd_new(args):
         print(f"  Summary:  {summary}")
     if git_ok:
         print(f"  Git:      initialised")
+    if repo_url:
+        print(f"  Repo:     {repo_url}")
     if adr_ok:
         adr_new_cmd, _ = _adr_commands(project_root)
         print(f"  ADR log:  docs/adr/ — add a record with `{adr_new_cmd}`")
@@ -1272,9 +1334,79 @@ def cmd_open(args):
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".venv", "venv", ".env", "env",
     ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "dist", "build", ".next", ".nuxt", ".output",
-    "target", "Pods", ".dart_tool", ".pub-cache",
+    "dist", "dist-node", "build", ".next", ".nuxt", ".output",
+    "target", "Pods", ".dart_tool", ".pub-cache", "coverage",
+    "vendor", ".terraform", ".serverless", ".gradle",
 })
+
+# Files that mark a directory as a real project. A repo marker or a build
+# manifest is conclusive; the weak markers only suggest it.
+_REPO_MARKER = ".git"
+_MANIFEST_MARKERS = (
+    "package.json", "pyproject.toml", "setup.py", "requirements.txt",
+    "go.mod", "Cargo.toml", "Gemfile", "composer.json", "pubspec.yaml",
+    "pom.xml", "build.gradle", "Package.swift", "Makefile", "*.xcodeproj",
+)
+_WEAK_MARKERS = ("README.md", "CLAUDE.md", "docs", ".claude", "src")
+
+
+def _project_markers(path):
+    """Return (strong, weak) lists of project markers found in *path*."""
+    strong, weak = [], []
+    try:
+        names = set(os.listdir(path))
+    except OSError:
+        return strong, weak
+
+    if _REPO_MARKER in names:
+        strong.append("git")
+    for marker in _MANIFEST_MARKERS:
+        if marker.startswith("*"):
+            suffix = marker[1:]
+            if any(n.endswith(suffix) for n in names):
+                strong.append(suffix.lstrip("."))
+        elif marker in names:
+            strong.append(marker)
+    for marker in _WEAK_MARKERS:
+        if marker in names:
+            weak.append(marker)
+    return strong, weak
+
+
+def _classify_dir(path):
+    """Classify a directory as a project candidate.
+
+    Returns (tier, reason) where tier is 'strong', 'weak' or 'none'.
+    """
+    strong, weak = _project_markers(path)
+    if strong:
+        return "strong", ", ".join(strong)
+    if weak:
+        return "weak", ", ".join(weak) + " only"
+    return "none", "no project markers"
+
+
+def _is_repo(path):
+    """True if *path* looks like a self-contained project (repo or manifest)."""
+    strong, _ = _project_markers(path)
+    return bool(strong)
+
+
+def _disk_categories(base):
+    """List category directories under *base* — excludes repos and junk dirs."""
+    cats = []
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return cats
+    for name in names:
+        path = os.path.join(base, name)
+        if not os.path.isdir(path) or name.startswith(".") or name in _SKIP_DIRS:
+            continue
+        if _is_repo(path):
+            continue  # a misplaced repo, not a category
+        cats.append(name)
+    return cats
 
 
 def _walk_latest_mtime(root):
@@ -1336,6 +1468,424 @@ def _rename_project_dir(entry, new_dir_name):
     return True
 
 
+def _repath_entries(entries, old_root, new_root):
+    """Rewrite every indexed path that lives under *old_root*. Returns count."""
+    moved = 0
+    for entry in entries:
+        touched = False
+        for key in ("project_root", "docs_path", "initial_prompt_path"):
+            val = entry.get(key, "")
+            if val == old_root or val.startswith(old_root + os.sep):
+                entry[key] = new_root + val[len(old_root):]
+                touched = True
+        if touched:
+            moved += 1
+    return moved
+
+
+def _discovered_entry(proj_path, cat_name, base_name, entries):
+    """Build an index entry for a directory found on disk."""
+    docs_path = os.path.join(proj_path, "docs")
+    if not os.path.isdir(docs_path):
+        docs_path = proj_path
+
+    mtime = _walk_latest_mtime(proj_path)
+    if mtime > 0:
+        last_worked = datetime.datetime.fromtimestamp(
+            mtime, tz=datetime.timezone.utc
+        ).isoformat()
+    else:
+        last_worked = now_iso()
+
+    return {
+        "id": next_id(entries),
+        "name": os.path.basename(proj_path).replace("-", " ").title(),
+        "category": cat_name,
+        "summary": "",
+        "project_root": proj_path,
+        "docs_path": docs_path,
+        "initial_prompt_path": "",
+        "base_directory": base_name,
+        "created_at": now_iso(),
+        "last_worked_at": last_worked,
+        "archived": False,
+        "tags": [],
+    }
+
+
+def _scan_candidates(cfg, entries, ignored):
+    """Find unindexed directories under the base dirs and classify them.
+
+    Returns (candidates, misplaced, skipped). Candidates are dicts with path,
+    name, category, base, tier and reason. Misplaced are repos sitting at
+    category level — projects belong one level deeper, inside a category.
+    """
+    indexed = set()
+    for e in entries:
+        p = e.get("project_root", "")
+        if p:
+            indexed.add(p)
+            if os.path.isdir(p):
+                indexed.add(os.path.realpath(p))
+
+    candidates, misplaced = [], []
+    skipped = 0
+
+    for bd in cfg.get("base_directories", []):
+        base = os.path.expanduser(bd["path"])
+        if not os.path.isdir(base):
+            continue
+
+        for cat_name in sorted(os.listdir(base)):
+            cat_path = os.path.join(base, cat_name)
+            if not os.path.isdir(cat_path) or cat_name.startswith("."):
+                continue
+            if cat_name in _SKIP_DIRS:
+                continue
+
+            # A repo at category level is misplaced. Never descend into it —
+            # its subdirectories are parts of that project, not projects.
+            if _is_repo(cat_path):
+                if cat_path not in indexed and os.path.realpath(cat_path) not in indexed:
+                    strong, _ = _project_markers(cat_path)
+                    misplaced.append({
+                        "path": cat_path,
+                        "name": cat_name,
+                        "base": bd["name"],
+                        "base_path": base,
+                        "reason": ", ".join(strong),
+                    })
+                continue
+
+            for proj_name in sorted(os.listdir(cat_path)):
+                proj_path = os.path.join(cat_path, proj_name)
+                if not os.path.isdir(proj_path) or proj_name.startswith("."):
+                    continue
+                if proj_name in _SKIP_DIRS:
+                    continue
+                real_path = os.path.realpath(proj_path)
+                if proj_path in indexed or real_path in indexed:
+                    continue
+                if is_ignored(proj_path, ignored):
+                    skipped += 1
+                    continue
+
+                tier, reason = _classify_dir(proj_path)
+                if os.path.islink(proj_path):
+                    reason += ", symlink"
+                candidates.append({
+                    "path": proj_path,
+                    "name": proj_name,
+                    "category": cat_name,
+                    "base": bd["name"],
+                    "tier": tier,
+                    "reason": reason,
+                })
+
+    return candidates, misplaced, skipped
+
+
+def _prompt_category(base, current=None):
+    """Ask which category a project belongs in. Returns a name, or None to skip."""
+    cats = _disk_categories(base)
+    if current and current not in cats:
+        cats.append(current)
+    print("\n  Which category?")
+    for i, c in enumerate(cats, 1):
+        print(f"    {i}. {c}")
+    print(f"    {DIM}or type a new category name, or 's' to skip{RESET}")
+    while True:
+        raw = input("  Category: ").strip()
+        if not raw or raw.lower() == "s":
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(cats):
+            return cats[int(raw) - 1]
+        matches = [c for c in cats if c.lower() == raw.lower()]
+        if matches:
+            return matches[0]
+        if prompt_confirm(f"  Create new category '{raw}'?", default=True):
+            return raw
+
+
+def _handle_misplaced(misplaced, cfg, entries, assume_yes):
+    """Offer to move category-level repos into a real category. Returns count."""
+    if not misplaced:
+        return 0
+
+    print(f"\n{BOLD}Misplaced repos{RESET} — a project is sitting where a category "
+          f"should be:")
+    for m in misplaced:
+        print(f"  {YELLOW}{m['name']}{RESET}  {DIM}({m['reason']}){RESET}")
+        print(f"    {DIM}{m['path']}{RESET}")
+
+    if assume_yes:
+        print(f"  {DIM}Left in place — rerun without --yes to move them.{RESET}")
+        return 0
+
+    moved = 0
+    for m in misplaced:
+        print(f"\n  {BOLD}{m['name']}{RESET} — move it under a category?")
+        category = _prompt_category(m["base_path"])
+        if not category:
+            print(f"    {DIM}Skipped.{RESET}")
+            continue
+
+        cat_path = os.path.join(m["base_path"], category)
+        dest = os.path.join(cat_path, m["name"])
+        if os.path.exists(dest):
+            print(f"    {YELLOW}{dest} already exists — skipped.{RESET}")
+            continue
+        try:
+            ensure_dir(cat_path)
+            shutil.move(m["path"], dest)
+        except OSError as exc:
+            print(f"    {YELLOW}Could not move: {exc}{RESET}")
+            continue
+
+        # Any indexed entry pointing inside the old location follows the move.
+        repathed = _repath_entries(entries, m["path"], dest)
+        entries.append(_discovered_entry(dest, category, m["base"], entries))
+        moved += 1
+        print(f"    {GREEN}Moved{RESET} → {dest}")
+        print(f"    {GREEN}Indexed{RESET} as a project in {category}")
+        if repathed:
+            print(f"    {DIM}Updated {repathed} existing index path(s).{RESET}")
+
+        # Keep the config's category list in step with what's on disk.
+        cats = cfg.get("categories", [])
+        if category not in cats:
+            cats.append(category)
+            cfg["categories"] = cats
+            save_config(cfg)
+            print(f"    {DIM}Added '{category}' to your category list.{RESET}")
+
+    return moved
+
+
+_TIER_LABEL = {
+    "strong": ("looks like a project", "a"),
+    "weak":   ("might be a project", "a"),
+    "none":   ("probably not a project", "i"),
+}
+
+
+def _review_candidates(candidates, cfg, entries, ignored, assume_yes):
+    """Triage discovered directories. Returns (added, ignored_count)."""
+    if not candidates:
+        return 0, 0
+
+    if assume_yes:
+        added = 0
+        for c in candidates:
+            if c["tier"] == "strong":
+                entries.append(_discovered_entry(c["path"], c["category"], c["base"], entries))
+                print(f"  {GREEN}ADDED:{RESET}   {c['name']} ({c['category']})  {DIM}{c['reason']}{RESET}")
+                added += 1
+        unsure = [c for c in candidates if c["tier"] != "strong"]
+        if unsure:
+            print(f"\n  {DIM}{len(unsure)} unclear folder(s) left alone — "
+                  f"rerun without --yes to review them.{RESET}")
+        return added, 0
+
+    print(f"\n{BOLD}Found {len(candidates)} unindexed folder(s).{RESET}")
+    print(f"  {GREEN}a{RESET} = add to index   {GREEN}i{RESET} = ignore (never ask again)"
+          f"   {GREEN}s{RESET} = skip for now   {GREEN}q{RESET} = stop reviewing")
+    print(f"  {DIM}Enter accepts the suggestion shown in brackets.{RESET}")
+
+    to_add, to_ignore = [], []
+    quit_review = False
+    last_category = None
+
+    for c in candidates:
+        if quit_review:
+            break
+        if c["category"] != last_category:
+            print(f"\n  {BOLD}{c['category']}{RESET}")
+            last_category = c["category"]
+
+        label, default = _TIER_LABEL[c["tier"]]
+        line = f"    {c['name'][:28]:<28} {DIM}{c['reason'][:34]:<34}{RESET}"
+        while True:
+            raw = (input(f"{line} [{default}]: ").strip().lower() or default)
+            if raw in ("a", "i", "s", "q"):
+                break
+            print(f"      {DIM}Answer a, i, s or q.{RESET}")
+        if raw == "a":
+            to_add.append(c)
+        elif raw == "i":
+            to_ignore.append(c)
+        elif raw == "q":
+            quit_review = True
+
+    if not to_add and not to_ignore:
+        print("\n  Nothing selected.")
+        return 0, 0
+
+    print()
+    if to_add:
+        print(f"  Add {len(to_add)}: {', '.join(c['name'] for c in to_add[:6])}"
+              f"{' …' if len(to_add) > 6 else ''}")
+    if to_ignore:
+        print(f"  Ignore {len(to_ignore)}: {', '.join(c['name'] for c in to_ignore[:6])}"
+              f"{' …' if len(to_ignore) > 6 else ''}")
+    if not prompt_confirm("Apply?", default=True):
+        print("  Cancelled — nothing written.")
+        return 0, 0
+
+    for c in to_add:
+        entries.append(_discovered_entry(c["path"], c["category"], c["base"], entries))
+    for c in to_ignore:
+        ignored.append(c["path"])
+    if to_ignore:
+        save_ignored(ignored)
+
+    return len(to_add), len(to_ignore)
+
+
+def _flag_indexed_entry(entry, include_unsure=False):
+    """Return a reason string if an indexed entry looks like it isn't a project.
+
+    Only conclusive problems are reported by default. A folder with no project
+    markers is a judgement call, so it is held back unless *include_unsure*.
+    """
+    root = entry.get("project_root", "")
+    if not root or not os.path.isdir(root):
+        return None  # handled by --prune
+    if entry.get("initial_prompt_path"):
+        return None  # created deliberately via `proj new`
+    name = os.path.basename(root)
+    if name in _SKIP_DIRS:
+        return "dependency or build folder"
+    parent = os.path.dirname(root)
+    if _is_repo(parent):
+        return f"part of {os.path.basename(parent)}"
+    if include_unsure:
+        tier, reason = _classify_dir(root)
+        if tier == "none":
+            return reason
+    return None
+
+
+def _review_indexed(cfg, entries, ignored, include_unsure=False):
+    """Triage index entries that don't look like projects. Returns entries kept."""
+    flagged = []
+    unsure_held = 0
+    for entry in entries:
+        reason = _flag_indexed_entry(entry, include_unsure)
+        if reason:
+            flagged.append((entry, reason))
+        elif not include_unsure and _flag_indexed_entry(entry, True):
+            unsure_held += 1
+
+    if not flagged:
+        print("Every indexed project still looks like a project. Nothing to review.")
+        if unsure_held:
+            print(f"  {DIM}{unsure_held} entr{'y has' if unsure_held == 1 else 'ies have'} "
+                  f"no project markers — 'proj rescan --review -v' to review those too.{RESET}")
+        return entries
+
+    if len(flagged) == 1:
+        print(f"{BOLD}1 indexed entry doesn't look like a project.{RESET}")
+    else:
+        print(f"{BOLD}{len(flagged)} indexed entries don't look like projects.{RESET}")
+    print(f"  {GREEN}r{RESET} = remove from index   {GREEN}i{RESET} = remove and ignore"
+          f"   {GREEN}k{RESET} = keep   {GREEN}q{RESET} = stop reviewing")
+    print(f"  {DIM}Files on disk are never deleted.{RESET}")
+    if unsure_held:
+        verb = "has" if unsure_held == 1 else "have"
+        print(f"  {DIM}({unsure_held} more {verb} no project markers — "
+              f"add -v to review those too.){RESET}")
+
+    remove_ids, ignore_paths = set(), []
+    parents_seen = {}
+    quit_review = False
+
+    for entry, reason in flagged:
+        if quit_review:
+            break
+        default = "k" if reason.startswith("no project markers") else "r"
+        line = (f"    {entry['name'][:24]:<24} {DIM}{entry.get('category', '')[:14]:<14}"
+                f" {reason[:30]:<30}{RESET}")
+        while True:
+            raw = (input(f"{line} [{default}]: ").strip().lower() or default)
+            if raw in ("r", "i", "k", "q"):
+                break
+            print(f"      {DIM}Answer r, i, k or q.{RESET}")
+        if raw == "q":
+            quit_review = True
+            continue
+        if raw == "k":
+            continue
+        remove_ids.add(entry["id"])
+        if raw == "i":
+            ignore_paths.append(entry["project_root"])
+        if reason.startswith("part of "):
+            parent = os.path.dirname(entry["project_root"])
+            parents_seen[parent] = parents_seen.get(parent, 0) + 1
+
+    if not remove_ids:
+        print("\n  Nothing selected.")
+        return entries
+
+    print(f"\n  Remove {len(remove_ids)} entr{'y' if len(remove_ids) == 1 else 'ies'} "
+          f"from the index ({len(ignore_paths)} also ignored).")
+    if not prompt_confirm("Apply?", default=True):
+        print("  Cancelled — nothing written.")
+        return entries
+
+    kept = [e for e in entries if e["id"] not in remove_ids]
+    if ignore_paths:
+        ignored.extend(ignore_paths)
+        save_ignored(ignored)
+    print(f"  {GREEN}Removed {len(entries) - len(kept)} entr"
+          f"{'y' if len(entries) - len(kept) == 1 else 'ies'}.{RESET}")
+
+    # Offer to index the parent projects those subfolders belonged to.
+    indexed_roots = {e.get("project_root", "") for e in kept}
+    for parent in sorted(parents_seen):
+        if parent in indexed_roots or not os.path.isdir(parent):
+            continue
+        base_path = os.path.dirname(parent)
+        category = os.path.basename(base_path)
+        print(f"\n  {os.path.basename(parent)} is the real project those "
+              f"{parents_seen[parent]} folder(s) belong to.")
+        if not prompt_confirm(f"  Index {os.path.basename(parent)}?", default=True):
+            continue
+        base_entry = _base_for_path(cfg, parent)
+        if not base_entry:
+            print(f"    {DIM}Not inside a configured base directory — skipped.{RESET}")
+            continue
+        base_root = os.path.expanduser(base_entry["path"])
+        if os.path.dirname(parent) == base_root:
+            # The parent is itself sitting at category level — move it first.
+            moved = _handle_misplaced([{
+                "path": parent, "name": os.path.basename(parent),
+                "base": base_entry["name"], "base_path": base_root,
+                "reason": _classify_dir(parent)[1],
+            }], cfg, kept, assume_yes=False)
+            if not moved:
+                continue
+        else:
+            kept.append(_discovered_entry(parent, category, base_entry["name"], kept))
+            print(f"    {GREEN}Indexed{RESET} {os.path.basename(parent)} ({category})")
+
+    return kept
+
+
+def _base_for_path(cfg, path):
+    """Return the configured base directory that contains *path*, if any.
+
+    Compares absolute paths so a relative or non-normalised base directory in
+    the config still matches an absolute path from the index.
+    """
+    target = os.path.abspath(os.path.expanduser(path))
+    for bd in cfg.get("base_directories", []):
+        base = os.path.abspath(os.path.expanduser(bd["path"]))
+        if target == base or target.startswith(base + os.sep):
+            return bd
+    return None
+
+
 def cmd_rescan(args):
     cfg = load_config()
     entries = load_index()
@@ -1354,6 +1904,13 @@ def cmd_rescan(args):
             for e in missing:
                 print(f"  {e['id']}: {e['name']} ({e.get('project_root', '')})")
             print("Run with --prune to remove them, or use 'proj delete <query>'.")
+
+    # Review indexed entries that no longer look like projects
+    if args.review:
+        entries = _review_indexed(cfg, entries, load_ignored(), include_unsure=args.verbose)
+        save_index(entries)
+        generate_projects_index(entries, cfg)
+        return
 
     # Reslug: rename project directories to match current slugify rules
     if args.reslug:
@@ -1460,81 +2017,25 @@ def cmd_rescan(args):
             elif args.verbose:
                 print(f"  OK:      {entry['name']}")
 
-    # Discover unindexed projects
+    # Discover unindexed projects — proposes, then writes only on confirmation
     if args.discover:
         ignored = load_ignored()
-        # Match by both symlink path and resolved real path to avoid duplicates
-        indexed_real = set()
-        for e in entries:
-            p = e.get("project_root", "")
-            indexed_real.add(p)
-            if os.path.isdir(p):
-                indexed_real.add(os.path.realpath(p))
+        candidates, misplaced, skipped = _scan_candidates(cfg, entries, ignored)
 
-        discovered = 0
-        skipped = 0
-        for bd in cfg.get("base_directories", []):
-            base = os.path.expanduser(bd["path"])
-            if not os.path.isdir(base):
-                continue
-            for cat_name in sorted(os.listdir(base)):
-                cat_path = os.path.join(base, cat_name)
-                if not os.path.isdir(cat_path) or cat_name.startswith("."):
-                    continue
-                for proj_name in sorted(os.listdir(cat_path)):
-                    proj_path = os.path.join(cat_path, proj_name)
-                    if not os.path.isdir(proj_path) or proj_name.startswith("."):
-                        continue
-                    real_path = os.path.realpath(proj_path)
-                    if proj_path in indexed_real or real_path in indexed_real:
-                        continue
-                    if is_ignored(proj_path, ignored):
-                        skipped += 1
-                        if args.verbose:
-                            print(f"  IGNORED: {proj_name} ({cat_name})")
-                        continue
-                    # Found an unindexed project
-                    is_link = os.path.islink(proj_path)
-                    discovered += 1
-                    link_note = " (symlink)" if is_link else ""
-                    if args.verbose:
-                        print(f"  FOUND:   {proj_name} ({cat_name}){link_note} at {proj_path}")
+        moved = _handle_misplaced(misplaced, cfg, entries, args.yes)
 
-                    docs_path = os.path.join(proj_path, "docs")
-                    if not os.path.isdir(docs_path):
-                        docs_path = proj_path
+        if not candidates:
+            print("\nNo unindexed folders found.")
+        added, newly_ignored = _review_candidates(candidates, cfg, entries, ignored, args.yes)
 
-                    # Derive last_worked_at from filesystem
-                    mtime = _walk_latest_mtime(proj_path)
-                    if mtime > 0:
-                        last_worked = datetime.datetime.fromtimestamp(
-                            mtime, tz=datetime.timezone.utc
-                        ).isoformat()
-                    else:
-                        last_worked = now_iso()
-
-                    new_entry = {
-                        "id": next_id(entries),
-                        "name": proj_name.replace("-", " ").title(),
-                        "category": cat_name,
-                        "summary": "",
-                        "project_root": proj_path,
-                        "docs_path": docs_path,
-                        "initial_prompt_path": "",
-                        "base_directory": bd["name"],
-                        "created_at": now_iso(),
-                        "last_worked_at": last_worked,
-                        "archived": False,
-                        "tags": [],
-                    }
-                    entries.append(new_entry)
-                    indexed_real.add(proj_path)
-                    indexed_real.add(real_path)
-
-        if discovered:
-            print(f"Discovered {discovered} new project(s).")
+        if added:
+            print(f"\nAdded {added} project(s) to the index.")
+        if newly_ignored:
+            print(f"Ignored {newly_ignored} folder(s) — they won't come up again.")
+        if moved:
+            print(f"Moved {moved} misplaced repo(s) into a category.")
         if skipped and args.verbose:
-            print(f"Skipped {skipped} ignored path(s).")
+            print(f"Skipped {skipped} already-ignored path(s).")
 
     save_index(entries)
     generate_projects_index(entries, cfg)
@@ -2555,6 +3056,9 @@ def build_parser():
     p_new.add_argument("--summary", "-s", help="One-line summary")
     p_new.add_argument("--base", "-b", help="Base directory name")
     p_new.add_argument("--no-notes", action="store_true", help="Skip prompts (non-interactive)")
+    p_new.add_argument("--org", "-o", help="GitHub owner for the new repo (org or username)")
+    p_new.add_argument("--no-remote", action="store_true",
+                       help="Skip creating a GitHub repo")
     p_new.add_argument("--adr", action="store_true",
                        help="Scaffold an ADR decision log in docs/adr/")
 
@@ -2597,7 +3101,11 @@ def build_parser():
     # rescan
     p_rescan = sub.add_parser("rescan", help="Rescan project directories")
     p_rescan.add_argument("--discover", action="store_true",
-                          help="Find unindexed projects in base dirs")
+                          help="Review unindexed folders in base dirs and add the real projects")
+    p_rescan.add_argument("--review", action="store_true",
+                          help="Review indexed entries that no longer look like projects")
+    p_rescan.add_argument("--yes", "-y", action="store_true",
+                          help="With --discover: add obvious projects without prompting")
     p_rescan.add_argument("--prune", action="store_true",
                           help="Remove projects whose directories no longer exist")
     p_rescan.add_argument("--reslug", action="store_true",
