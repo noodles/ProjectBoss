@@ -71,27 +71,29 @@ are not.
 ```bash
 brew tap noodles/tap
 brew trust noodles/tap
-brew install noodles/tap/pb
+brew install projectboss
 ```
 
-Three commands rather than one, for two reasons worth knowing about.
-
-Homebrew now refuses to load formulae from a third-party tap until you trust it,
-which is a good default and applies to every tap, not just this one. And the
-formula has to be named in full, because `brew install pb` resolves to an
-unrelated (and currently disabled) cask for a Pushbullet desktop app. The command
-itself is still just `pb`; nothing else on macOS installs one.
+The trust step is Homebrew's, not this project's: it refuses to load anything
+from a third-party tap until you trust it, for every tap. The formula is called
+`projectboss` because `brew install pb` resolves to an unrelated cask. The
+command it installs is still `pb`.
 
 Then add the shell function, which is what lets `pb open` change your shell's
 directory, something a command cannot do on its own:
 
 ```bash
-echo 'source '"$(brew --prefix pb)"'/share/pb/pb.zsh' >> ~/.zshrc
+echo "source $(brew --prefix projectboss)/share/projectboss/pb.zsh" >> ~/.zshrc
 source ~/.zshrc
 ```
 
 Everything except `pb open` and the cd offer at the end of `pb new` works
 without it.
+
+Homebrew installs a Python for `pb` to run on, which is about 80MB if you do not
+already have one. `pb` itself is one file and imports nothing outside the
+standard library; the clone install below uses whatever `python3` you already
+have.
 
 ### From a clone
 
