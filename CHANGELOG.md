@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- Add a test suite: 85 tests in `test_proj.py`, stdlib `unittest`, no dependencies. Run with `python3 -m unittest discover`. Covers slugging, status thresholds, query resolution, ID allocation, frontmatter, remote-URL parsing, discovery classification, index review, the ignore list, the data layer, template rendering, and both ADR modes
+- Fix `is_ignored` comparing paths case-sensitively. It used `os.path.normcase`, which is a no-op on everything except Windows, so the case-insensitive matching the code claimed to do never happened: a path typed into `proj ignore` with different casing to the one on disk silently failed to match. It now casefolds, and compares realpaths on both sides so a symlink matches its target either way round
+- Every test that touches disk uses a temp directory, and the data-layer tests repoint proj's module paths, so a test run can never read or write the real `~/.proj`
+
 ## 0.7.0
 
 - Add an MIT `LICENSE`. The repository was public without one, which meant nobody could legally copy, modify or fork it

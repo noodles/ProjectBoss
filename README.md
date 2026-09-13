@@ -248,6 +248,18 @@ Symlinked project folders work transparently. If you symlink a project into your
 
 The `proj` shell function wraps `proj.py` so that `proj open` can `cd` into the project directory. This coexists with any existing `prj` alias.
 
+## Tests
+
+Stdlib `unittest`, nothing to install:
+
+```bash
+python3 -m unittest discover        # all tests
+python3 -m unittest discover -v     # per-test names
+```
+
+Tests never touch the real `~/.proj`: anything that writes to disk uses a temp
+directory, and the data-layer tests repoint the module's paths at it.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

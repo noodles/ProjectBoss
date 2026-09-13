@@ -17,7 +17,16 @@ bash install.sh && source ~/.zshrc
 proj <command>
 ```
 
-There is no build step, no test suite, no linter configured.
+Tests are stdlib `unittest`, no dependencies and no runner to install:
+
+```bash
+python3 -m unittest discover        # all tests
+python3 -m unittest discover -v     # per-test names
+```
+
+They live in `test_proj.py` and never touch the real `~/.proj`: disk tests use a
+temp directory, and the data-layer tests repoint `proj`'s module-level paths at
+it. There is no build step and no linter configured.
 
 ## Architecture
 

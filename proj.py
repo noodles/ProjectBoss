@@ -62,7 +62,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -642,13 +642,20 @@ def _next_idea_id(ideas):
 
 
 def is_ignored(proj_path, ignored):
-    """Check if a path (or its realpath) is in the ignored list."""
-    # Use normcase for case-insensitive filesystems (macOS)
-    nc = os.path.normcase
-    proj_norm = nc(proj_path)
-    real_norm = nc(os.path.realpath(proj_path))
-    ignored_norm = {nc(p) for p in ignored}
-    return proj_norm in ignored_norm or real_norm in ignored_norm
+    """Check if a path (or its realpath) is in the ignored list.
+
+    Compared case-insensitively, since the default macOS volume is, and a path
+    typed by hand into `proj ignore` won't always match the casing on disk.
+    (`os.path.normcase` is a no-op everywhere except Windows, so it can't do
+    this job.) Realpaths are compared too, so a symlink matches its target.
+    """
+    def norm(path):
+        return os.path.normcase(path).casefold().rstrip(os.sep)
+
+    candidates = {norm(proj_path), norm(os.path.realpath(proj_path))}
+    ignored_norm = {norm(p) for p in ignored}
+    ignored_norm |= {norm(os.path.realpath(p)) for p in ignored}
+    return bool(candidates & ignored_norm)
 
 
 def next_id(entries):
