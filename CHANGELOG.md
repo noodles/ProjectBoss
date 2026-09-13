@@ -4,6 +4,10 @@ Versions are CalVer, `YYYY.MM.PATCH`, from 2026.09.0 onwards. Releases up to
 0.8.0 used SemVer. CalVer carries no compatibility signal, so any change to the
 on-disk index format is called out explicitly in its entry.
 
+## 2026.09.4
+
+- First-run setup now requires **both** stdin and stdout to be a terminal before it asks anything. stdin alone was not enough: a pty with nobody on the other end is still a tty, so a captured or piped run waited forever for an answer nobody could give. It also means `pb list --json | jq` never prompts
+
 ## 2026.09.3
 
 - Fix a crash on the first run in any environment that has a terminal attached but nothing readable on the other end: a pty with no writer, a detached process, a CI runner. `sys.stdin.isatty()` was true, so setup started, and the first `input()` died with `OSError: [Errno 5]`. It now falls back to the defaults and says so. Found by `brew test`, which runs exactly that way

@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
 
 # CalVer: YYYY.MM.PATCH, zero-padded month. It carries no compatibility signal,
 # so a change to the on-disk index format is called out in the changelog.
-VERSION = "2026.09.3"
+VERSION = "2026.09.4"
 
 # ANSI color support, disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -3203,10 +3203,13 @@ def main():
     # First run: ask for the settings that can't be guessed, rather than
     # silently adopting defaults the user has never seen. `config` is exempt,
     # since `config init` IS the setup and `config show` has to stay readable.
+    # Both ends must be a terminal before asking anything. stdin alone is not
+    # enough: a pty with nobody on the other end is still a tty, so a captured
+    # or piped run would block forever waiting for an answer nobody can give.
+    # Requiring stdout too also means `pb list --json | jq` never prompts.
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if (not os.path.isfile(CONFIG_PATH) and args.command != "config"
-            and sys.stdin.isatty()):
-        # A terminal can still be unreadable: a pty with nothing on the other
-        # end, a detached process, a CI runner. Fall back rather than crash.
+            and interactive):
         try:
             setup_config()
         except (EOFError, OSError):

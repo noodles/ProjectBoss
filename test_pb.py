@@ -709,6 +709,18 @@ class TestSetupFallsBackWhenInputIsUnreadable(TempDirCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), "[]")
 
+    def test_a_pty_on_stdin_with_captured_stdout_does_not_prompt(self):
+        # brew test, and any CI runner, looks exactly like this.
+        parent, child = pty.openpty()
+        try:
+            out = self.run_list(child)
+        finally:
+            os.close(parent)
+            os.close(child)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "[]")
+        self.assertNotIn("Setting up pb", out.stderr)
+
     def test_a_pty_with_nothing_to_read_does_not_crash(self):
         parent, child = pty.openpty()
         try:
