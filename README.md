@@ -4,6 +4,10 @@ Local CLI tool (`proj`) for creating, finding, and managing projects with consis
 
 Zero external dependencies — pure Python 3 + stdlib.
 
+**Requires macOS and zsh.** Opening projects uses `open -a`, the clipboard paste
+in `proj new` uses `pbpaste`, and the installer writes a shell function to
+`~/.zshrc`. Everything else is portable; those three are not.
+
 ## Installation
 
 ```bash
@@ -14,7 +18,12 @@ source ~/.zshrc
 This will:
 - Symlink `proj.py` to `~/bin/proj.py`
 - Add a `proj` shell function to `~/.zshrc` (enables `cd` via `proj open`)
-- Create `~/.proj/` with default config
+- Create `~/.proj/`
+
+The first time you run any command, `proj` asks where your projects live, what
+categories you use, and which GitHub owners it may create repos under. Nothing
+is assumed. Re-run that any time with `proj config init`, or edit the file
+directly with `proj config edit`.
 
 ## Commands
 
@@ -24,10 +33,10 @@ Create a new project interactively or with flags.
 
 ```bash
 proj new                              # interactive
-proj new --name "My Project" -c Noodle -s "A cool thing" --no-notes
+proj new --name "My Project" -c Work -s "A cool thing" --no-notes
 proj new --adr                        # skip the decision-log question, always scaffold
 proj new --no-adr                     # skip the decision-log question, never scaffold
-proj new -o momentous-developments    # pick the GitHub owner up front
+proj new -o your-org                  # pick the GitHub owner up front
 proj new --no-remote                  # local git only, no GitHub repo
 ```
 
@@ -54,7 +63,7 @@ List projects in a table.
 ```bash
 proj list                             # active + stale (non-archived)
 proj list --status stale              # only stale
-proj list --category Noodle --short   # compact output
+proj list --category Work --short     # compact output
 proj list --sort name --limit 5
 ```
 
@@ -115,7 +124,7 @@ Use `--discover` after initial install to import all your existing projects.
 
 Nothing is written until you confirm. Answer `a` to add, `i` to ignore permanently, `s` to skip, or `q` to stop; Enter accepts the suggestion. `--yes` skips the review and adds only the folders with conclusive evidence.
 
-**Misplaced repos.** A repo sitting at category level (e.g. `01_Projects/my-app/` with a `.git` in it) is in the wrong place — its subfolders are parts of one project, not separate projects. Discovery never descends into it. Instead it offers to move the repo under a category, indexes it as a single project, and repoints any existing index entries at the new location.
+**Misplaced repos.** A repo sitting at category level (e.g. `~/Projects/my-app/` with a `.git` in it) is in the wrong place — its subfolders are parts of one project, not separate projects. Discovery never descends into it. Instead it offers to move the repo under a category, indexes it as a single project, and repoints any existing index entries at the new location.
 
 **`--review`** applies the same tests to what's already indexed. By default it only raises conclusive problems — dependency folders and subfolders of a project — and reports how many "no project markers" judgement calls it held back; add `-v` to review those too. Projects you created with `proj new` are never flagged. Answer `r` to remove from the index, `i` to remove and ignore, `k` to keep. Files on disk are never deleted. When you remove subfolders of a project that isn't itself indexed, it offers to index the real project.
 
@@ -126,7 +135,7 @@ Remove non-project folders from the index and prevent them from being re-discove
 ```bash
 proj ignore 3                         # ignore by ID
 proj ignore "shared"                  # ignore by name
-proj ignore ~/Documents/01_Projects/NVE/docs   # ignore by path
+proj ignore ~/Projects/Work/shared-docs        # ignore by path
 proj ignore --list                    # show all ignored paths
 proj ignore --remove docs             # un-ignore (substring match)
 ```
@@ -216,12 +225,13 @@ Thresholds are configurable in `~/.proj/config.json`.
 ## GitHub owners
 
 ```json
-"github_orgs": ["noodles", "momentous-developments", "NVE-Team"],
-"default_github_org": "noodles"
+"github_orgs": ["your-username", "your-org", "a-client-org"],
+"default_github_org": "your-username"
 ```
 
 `proj new` offers these when creating a repo. Personal accounts and
-organisations are interchangeable here: `gh` treats both as an owner.
+organisations are interchangeable here: `gh` treats both as an owner. Leave the
+list empty and `proj new` asks for an owner by hand.
 
 ## Data
 
@@ -232,8 +242,12 @@ organisations are interchangeable here: `gh` treats both as an owner.
 
 ## Symlinks
 
-Symlinked project folders work transparently. If you symlink a project into your base directory structure (e.g. `ln -s /Volumes/WORK/my-project ~/Documents/01_Projects/Noodle/my-project`), it will be discovered by `rescan --discover`, and all commands (`open`, `info`, `rescan` mtime scanning) follow symlinks correctly.
+Symlinked project folders work transparently. If you symlink a project into your base directory structure (e.g. `ln -s /Volumes/WORK/my-project ~/Projects/Work/my-project`), it will be discovered by `rescan --discover`, and all commands (`open`, `info`, `rescan` mtime scanning) follow symlinks correctly.
 
 ## Shell Integration
 
 The `proj` shell function wraps `proj.py` so that `proj open` can `cd` into the project directory. This coexists with any existing `prj` alias.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

@@ -38,34 +38,31 @@ IDEA_CATEGORIES = [
     ("refactor",      "🔧", "Refactor",      "refactoring without changing functionality"),
 ]
 
+# Deliberately empty of anything personal: `proj config init` fills these in by
+# asking, and it runs automatically the first time proj is used interactively.
 DEFAULT_CONFIG = {
     "base_directories": [
-        {"name": "default", "path": "~/Documents/01_Projects"}
+        {"name": "default", "path": "~/Projects"}
     ],
     "default_base_directory": "default",
-    "categories": [
-        "Noodle", "Shopify", "NVE", "Hypnosis",
-        "Julia", "Nooduino", "NoosaQueen", "STAT",
-    ],
-    "default_category": "Noodle",
-    "github_orgs": [
-        "noodles", "momentous-developments", "NVE-Team",
-        "kitly-co", "momentous-labs", "soba-solutions",
-    ],
-    "default_github_org": "noodles",
+    "categories": [],
+    "default_category": None,
+    "github_orgs": [],
+    "default_github_org": None,
     "status_thresholds": {
         "stale_after_days": 14,
         "archived_after_days": 90,
     },
-    "project_editor": "Zed",
-    "prompt_editor": "Typora",
+    # Empty means "whatever the OS opens this with".
+    "project_editor": "",
+    "prompt_editor": "",
     "templates": {
         "initial_prompt_name": "{slug}_initial_prompt.md",
         "readme_name": "README.md",
     },
 }
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -252,14 +249,13 @@ def read_key():
 
 
 def open_in_app(app, path):
-    """Open a file or directory in a macOS app via `open -a`."""
+    """Open a file or directory in a macOS app via `open`. An empty app name
+    hands the path to whatever the OS opens it with."""
+    cmd = ["open", "-a", app, path] if app else ["open", path]
     try:
-        subprocess.run(
-            ["open", "-a", app, path],
-            check=True, capture_output=True,
-        )
+        subprocess.run(cmd, check=True, capture_output=True)
     except subprocess.CalledProcessError:
-        print(f"  Could not open {app}.")
+        print(f"  Could not open {app or path}.")
 
 
 def prompt_text(label, default=None):
@@ -785,6 +781,49 @@ def create_readme(path, meta):
 # ---------------------------------------------------------------------------
 
 
+def _prompt_list(label, hint):
+    """Prompt for a comma-separated list. Empty input means an empty list."""
+    print(f"  {DIM}{hint}{RESET}")
+    raw = input(f"{label}: ").strip()
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def setup_config():
+    """Ask for the handful of settings that are personal to one machine, and
+    write the config. Everything asked here has a sensible skip."""
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    print(f"\n{BOLD}Setting up proj{RESET}  {DIM}(Enter accepts the default){RESET}\n")
+
+    base = prompt_text("Where do your projects live?",
+                       default=DEFAULT_CONFIG["base_directories"][0]["path"])
+    cfg["base_directories"] = [{"name": "default", "path": base}]
+
+    cfg["categories"] = _prompt_list(
+        "Categories",
+        "Comma-separated folders one level under that, e.g. Work, Clients, "
+        "Personal. Leave blank to type one each time.")
+    if cfg["categories"]:
+        cfg["default_category"] = cfg["categories"][0]
+
+    cfg["github_orgs"] = _prompt_list(
+        "GitHub owners",
+        "Comma-separated usernames or orgs `proj new` can create repos under. "
+        "Leave blank to skip GitHub.")
+    if cfg["github_orgs"]:
+        cfg["default_github_org"] = cfg["github_orgs"][0]
+
+    print(f"  {DIM}Apps to open projects and prompts with, by name as macOS "
+          f"knows them (Zed, VS Code, Typora). Blank uses the OS default.{RESET}")
+    cfg["project_editor"] = input("Project editor: ").strip()
+    cfg["prompt_editor"] = input("Prompt editor: ").strip()
+
+    ensure_dir(os.path.expanduser(base))
+    save_config(cfg)
+    print(f"\n{GREEN}Config written{RESET} to {CONFIG_PATH}")
+    print(f"  {DIM}Change it any time with `proj config edit`.{RESET}\n")
+    return cfg
+
+
 def cmd_config(args):
     action = args.action or "show"
 
@@ -793,8 +832,7 @@ def cmd_config(args):
             if not prompt_confirm("Config already exists. Overwrite?", default=False):
                 print("Aborted.")
                 return
-        save_config(DEFAULT_CONFIG)
-        print(f"Config created at {CONFIG_PATH}")
+        setup_config()
         return
 
     if action == "show":
@@ -804,7 +842,7 @@ def cmd_config(args):
 
     if action == "edit":
         cfg = load_config()
-        editor = cfg.get("project_editor", "Zed")
+        editor = cfg.get("project_editor", "")
         if not os.path.isfile(CONFIG_PATH):
             save_config(cfg)
         open_in_app(editor, CONFIG_PATH)
@@ -1034,11 +1072,11 @@ def cmd_new(args):
 
     # 12. Offer to open in editor(s)
     if not args.no_notes:
-        project_editor = cfg.get("project_editor", "Zed")
-        prompt_editor = cfg.get("prompt_editor", "Typora")
+        project_editor = cfg.get("project_editor", "")
+        prompt_editor = cfg.get("prompt_editor", "")
         choice = prompt_choice("What next?", [
-            f"Open project in {project_editor}",
-            f"Edit prompt in {prompt_editor}",
+            f"Open project in {project_editor or 'the default app'}",
+            f"Edit prompt in {prompt_editor or 'the default app'}",
             "Both 1 & 2",
             "Skip",
         ], default="Skip")
@@ -1319,7 +1357,7 @@ def cmd_open(args):
         return
 
     if args.editor:
-        editor = cfg.get("project_editor", "Zed")
+        editor = cfg.get("project_editor", "")
         open_in_app(editor, target)
         return
 
@@ -3081,10 +3119,18 @@ def main():
     }
 
     handler = commands.get(args.command)
-    if handler:
-        handler(args)
-    else:
+    if not handler:
         parser.print_help()
+        return
+
+    # First run: ask for the settings that can't be guessed, rather than
+    # silently adopting defaults the user has never seen. `config` is exempt,
+    # since `config init` IS the setup and `config show` has to stay readable.
+    if (not os.path.isfile(CONFIG_PATH) and args.command != "config"
+            and sys.stdin.isatty()):
+        setup_config()
+
+    handler(args)
 
 
 if __name__ == "__main__":

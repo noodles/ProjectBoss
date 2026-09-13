@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Add an MIT `LICENSE`. The repository was public without one, which meant nobody could legally copy, modify or fork it
+- `DEFAULT_CONFIG` no longer ships one person's setup. Categories and GitHub owners start empty, the base directory is `~/Projects`, and the editors are blank (an empty editor name hands the path to whatever the OS opens it with, instead of a named app the user may not have installed)
+- The first interactive run asks where projects live, which categories to use, and which GitHub owners `proj new` may create repos under, then writes the config. `proj config init` runs the same prompts. Non-interactive first runs (no tty) fall back to the defaults silently rather than hanging on a prompt
+- README states the macOS and zsh requirement up front: `open -a`, `pbpaste` and the `~/.zshrc` shell function are the three things that aren't portable
+- README examples use neutral names rather than the author's own categories and organisations
+
 ## 0.6.0
 
 - Remove `proj reflect`. It reviewed findings from ReflectFlow, which is defunct, and read them from `~/.claude/reflectflow/staging` — a path nobody but its author had, so the command silently did nothing for everyone else. 250 lines gone
