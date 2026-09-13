@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0
+
+- Remove `proj reflect`. It reviewed findings from ReflectFlow, which is defunct, and read them from `~/.claude/reflectflow/staging` — a path nobody but its author had, so the command silently did nothing for everyone else. 250 lines gone
+
 ## 0.5.0
 
 - The ADR decision log no longer requires log4brains. `proj adr init` now scaffolds plain markdown (`docs/adr/template.md`, `README.md`, and the agent skill) and nothing else: no `.log4brains.yml`, no `package.json` scripts, no `.gitignore` entry, no Node. log4brains is a website generator, which earns its place in a platform with a readership and not in a three-record log or a project that isn't software

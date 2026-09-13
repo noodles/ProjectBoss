@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ANSI color support — disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -401,7 +401,6 @@ def print_welcome():
         ("proj edit <query>",   "Edit project metadata"),
         ("proj idea",           "Capture or list project ideas"),
         ("proj adr init",       "Scaffold an ADR decision log"),
-        ("proj reflect",        "Review ReflectFlow findings"),
         ("proj delete <query>", "Remove a project from the index"),
         ("proj rescan",         "Update timestamps and detect missing projects"),
         ("proj ignore",         "Ignore folders that aren't projects"),
@@ -2393,256 +2392,6 @@ def cmd_idea(args):
 
 
 # ---------------------------------------------------------------------------
-# Command: reflect
-# ---------------------------------------------------------------------------
-
-REFLECTFLOW_STAGING = os.path.expanduser("~/.claude/reflectflow/staging")
-REFLECTFLOW_ARCHIVE = os.path.expanduser("~/.claude/reflectflow/archive")
-
-_REFLECT_TYPE_MAP = {
-    "quick-scan": "Quick Scan",
-    "feature-review": "Feature Review",
-    "weekly-retro": "Weekly Retro",
-    "decisions": "Decisions",
-    "doc-update": "Doc Update",
-}
-
-
-def _reflect_finding_type(filename):
-    """Derive finding type from filename prefix."""
-    for prefix, label in _REFLECT_TYPE_MAP.items():
-        if filename.startswith(prefix):
-            return label
-    return "Finding"
-
-
-def _reflect_is_error(filepath):
-    """Check if a finding file is just an error message."""
-    try:
-        size = os.path.getsize(filepath)
-        if size >= 100:
-            return False
-        with open(filepath) as f:
-            content = f.read()
-        return "Error: Exceeded" in content
-    except OSError:
-        return False
-
-
-def _reflect_archive(filepath):
-    """Move a finding file to the archive directory."""
-    ensure_dir(REFLECTFLOW_ARCHIVE)
-    dest = os.path.join(REFLECTFLOW_ARCHIVE, os.path.basename(filepath))
-    shutil.move(filepath, dest)
-
-
-def _reflect_list_findings():
-    """Return list of (filepath, filename, type_label) for pending findings."""
-    if not os.path.isdir(REFLECTFLOW_STAGING):
-        return []
-    findings = []
-    for name in sorted(os.listdir(REFLECTFLOW_STAGING)):
-        if name.startswith(".") or not name.endswith(".md"):
-            continue
-        filepath = os.path.join(REFLECTFLOW_STAGING, name)
-        if not os.path.isfile(filepath):
-            continue
-        findings.append((filepath, name, _reflect_finding_type(name)))
-    return findings
-
-
-def _reflect_dismiss_errors(findings):
-    """Auto-archive error-only findings, return remaining findings."""
-    errors = set()
-    for f in findings:
-        if _reflect_is_error(f[0]):
-            errors.add(f[0])
-    if errors:
-        print(f"Found {len(errors)} error-only finding{'s' if len(errors) != 1 else ''}"
-              f" — auto-dismissing.")
-        for filepath in errors:
-            _reflect_archive(filepath)
-    return [f for f in findings if f[0] not in errors]
-
-
-def _reflect_show_summary(findings):
-    """Print count summary by type."""
-    counts = {}
-    for _, _, type_label in findings:
-        counts[type_label] = counts.get(type_label, 0) + 1
-    parts = ", ".join(f"{v} {k.lower()}{'s' if v != 1 else ''}" for k, v in counts.items())
-    total = len(findings)
-    print(f"\n{BOLD}{total} pending finding{'s' if total != 1 else ''}{RESET}"
-          f" ({parts})")
-
-
-def _reflect_apply(filepath, content):
-    """Handle the Apply action — route finding to a destination."""
-    destinations = [
-        "Global rule (~/.claude/rules/)",
-        "Project rule (.claude/rules/)",
-        "Project CLAUDE.md",
-        "Memory (~/.claude/projects/.../memory/)",
-        "Manual (just print the path suggestion)",
-    ]
-    dest = prompt_choice("Route to", destinations)
-
-    if dest.startswith("Manual"):
-        print(f"\n  {DIM}Suggested locations:{RESET}")
-        print(f"    Global rule:  ~/.claude/rules/<name>.md")
-        print(f"    Project rule: .claude/rules/<name>.md")
-        print(f"    CLAUDE.md:    append to project CLAUDE.md")
-        _reflect_archive(filepath)
-        print(f"  {GREEN}Archived.{RESET} Apply the content manually.")
-        return
-
-    # Determine target directory and prompt for filename
-    if dest.startswith("Global"):
-        target_dir = os.path.expanduser("~/.claude/rules")
-    elif dest.startswith("Project rule"):
-        target_dir = os.path.join(os.getcwd(), ".claude", "rules")
-    elif dest.startswith("Project CLAUDE"):
-        target_path = os.path.join(os.getcwd(), "CLAUDE.md")
-        ensure_dir(os.path.dirname(target_path))
-        mode = "a" if os.path.exists(target_path) else "w"
-        with open(target_path, mode) as f:
-            if mode == "a":
-                f.write("\n\n")
-            f.write(content)
-        _reflect_archive(filepath)
-        print(f"  {GREEN}Appended to {target_path} and archived.{RESET}")
-        return
-    elif dest.startswith("Memory"):
-        target_dir = os.path.expanduser("~/.claude/projects")
-        # Find the first memory directory that exists
-        print(f"\n  {DIM}Memory directories are project-specific.")
-        print(f"  Copy the content to the appropriate memory file manually.{RESET}")
-        _reflect_archive(filepath)
-        print(f"  {GREEN}Archived.{RESET} Apply the content manually.")
-        return
-    else:
-        target_dir = os.path.expanduser("~/.claude/rules")
-
-    # Suggest a filename based on the finding file
-    basename = os.path.splitext(os.path.basename(filepath))[0]
-    # Strip timestamp portion to get a cleaner suggestion
-    suggested = re.sub(r"-\d{4}-\d{2}-\d{2}.*$", "", basename)
-    suggested = re.sub(r"-\d{10,}$", "", suggested)
-    if not suggested:
-        suggested = basename
-    suggested = suggested + ".md"
-
-    filename = prompt_text("Filename", default=suggested)
-    if not filename:
-        print("  Cancelled.")
-        return
-    if not filename.endswith(".md"):
-        filename += ".md"
-
-    ensure_dir(target_dir)
-    target_path = os.path.join(target_dir, filename)
-    mode = "a" if os.path.exists(target_path) else "w"
-    with open(target_path, mode) as f:
-        if mode == "a":
-            f.write("\n\n")
-        f.write(content)
-    _reflect_archive(filepath)
-    print(f"  {GREEN}Written to {target_path} and archived.{RESET}")
-
-
-def cmd_reflect(args):
-    """Interactive review of ReflectFlow findings."""
-    findings = _reflect_list_findings()
-
-    if not findings:
-        print("No pending ReflectFlow findings.")
-        return
-
-    # --list: non-interactive listing
-    if getattr(args, "list_findings", False):
-        _reflect_show_summary(findings)
-        error_count = sum(1 for f in findings if _reflect_is_error(f[0]))
-        if error_count:
-            print(f"  {DIM}({error_count} are error-only — use --dismiss-errors to clean up){RESET}")
-        print()
-        for filepath, name, type_label in findings:
-            is_err = _reflect_is_error(filepath)
-            marker = f" {DIM}(error){RESET}" if is_err else ""
-            print(f"  {CYAN}{type_label:<16}{RESET} {name}{marker}")
-        return
-
-    # --dismiss-errors: bulk dismiss errors only
-    if getattr(args, "dismiss_errors", False):
-        remaining = _reflect_dismiss_errors(findings)
-        errcount = len(findings) - len(remaining)
-        if errcount == 0:
-            print("No error-only findings found.")
-        else:
-            print(f"Done. {len(remaining)} finding{'s' if len(remaining) != 1 else ''} remaining.")
-        return
-
-    # Interactive review
-    # First auto-dismiss errors
-    findings = _reflect_dismiss_errors(findings)
-
-    if not findings:
-        print("No findings to review after dismissing errors.")
-        return
-
-    _reflect_show_summary(findings)
-
-    applied = 0
-    dismissed = 0
-    skipped = 0
-
-    for filepath, name, type_label in findings:
-        print(f"\n{'─' * 60}")
-        print(f"  {BOLD}{type_label}{RESET}  {DIM}{name}{RESET}")
-        print(f"{'─' * 60}")
-
-        with open(filepath) as f:
-            content = f.read()
-        lines = content.splitlines()
-        total_lines = len(lines)
-        truncated = total_lines > 40
-
-        if truncated:
-            display = "\n".join(lines[:40])
-            print(display)
-            print(f"\n  {DIM}... truncated, showing 40/{total_lines} lines{RESET}")
-        else:
-            print(content)
-
-        while True:
-            action = prompt_choice("Action", ["Apply", "Dismiss", "Skip", "Show full"])
-
-            if action == "Show full":
-                if truncated:
-                    print(f"\n{'─' * 40}")
-                    print(content)
-                    print(f"{'─' * 40}")
-                else:
-                    print(f"  {DIM}(already showing full content){RESET}")
-                continue
-
-            if action == "Apply":
-                _reflect_apply(filepath, content)
-                applied += 1
-            elif action == "Dismiss":
-                _reflect_archive(filepath)
-                print(f"  {DIM}Archived.{RESET}")
-                dismissed += 1
-            else:  # Skip
-                skipped += 1
-            break
-
-    print(f"\n{BOLD}Review complete:{RESET} "
-          f"{GREEN}Applied: {applied}{RESET}, "
-          f"Dismissed: {dismissed}, "
-          f"Skipped: {skipped}")
-
-
-# ---------------------------------------------------------------------------
 # Command: adr — scaffold an Architecture Decision Record log
 # ---------------------------------------------------------------------------
 
@@ -3287,13 +3036,6 @@ def build_parser():
     p_adr.add_argument("--no-skill", dest="no_skill", action="store_true",
                        help="Don't write .claude/skills/adr/SKILL.md")
 
-    # reflect
-    p_reflect = sub.add_parser("reflect", help="Review ReflectFlow findings")
-    p_reflect.add_argument("--list", "-l", dest="list_findings", action="store_true",
-                           help="List pending findings (non-interactive)")
-    p_reflect.add_argument("--dismiss-errors", dest="dismiss_errors", action="store_true",
-                           help="Auto-archive error-only findings")
-
     # help
     p_help = sub.add_parser("help", help="Show help for a command")
     p_help.add_argument("topic", nargs="?", help="Command to get help for")
@@ -3336,7 +3078,6 @@ def main():
         "ignore": cmd_ignore,
         "idea": cmd_idea,
         "adr": cmd_adr,
-        "reflect": cmd_reflect,
     }
 
     handler = commands.get(args.command)
