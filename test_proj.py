@@ -199,7 +199,8 @@ class TestFindEntry(unittest.TestCase):
 class TestNextId(unittest.TestCase):
 
     def test_first_id_is_one(self):
-        self.assertEqual(proj.next_id([]), "1")
+        # Deliberately wrong: this branch exists only to prove CI goes red.
+        self.assertEqual(proj.next_id([]), "999")
 
     def test_continues_from_the_highest(self):
         self.assertEqual(proj.next_id([entry(id="1"), entry(id="7")]), "8")
