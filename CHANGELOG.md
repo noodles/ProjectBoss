@@ -4,6 +4,12 @@ Versions are CalVer, `YYYY.MM.PATCH`, from 2026.09.0 onwards. Releases up to
 0.8.0 used SemVer. CalVer carries no compatibility signal, so any change to the
 on-disk index format is called out explicitly in its entry.
 
+## 2026.09.2
+
+- Install with Homebrew: `brew tap noodles/tap && brew install pb`. The previous route was cloning the repository and running a bash script that edits your `~/.zshrc`, which is a lot to ask of someone who has known about the tool for forty seconds
+- The shell function moved out of `install.sh` into `shell/pb.zsh`, so the installer and the Homebrew formula share one definition rather than keeping two copies in step
+- `install.sh` now symlinks `~/bin/pb` rather than `~/bin/pb.py`, so the shell function can call `command pb` and behave identically whichever way pb was installed. The old `pb.py` symlink is removed on upgrade
+
 ## 2026.09.1
 
 - Add a demo recording to the README, reproducible with `demo/record.sh`. It runs against a throwaway home directory built by `demo/setup.sh`, so it can never show real projects and re-recording gives the same session

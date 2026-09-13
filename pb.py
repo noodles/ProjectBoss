@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
 
 # CalVer: YYYY.MM.PATCH, zero-padded month. It carries no compatibility signal,
 # so a change to the on-disk index format is called out in the changelog.
-VERSION = "2026.09.1"
+VERSION = "2026.09.2"
 
 # ANSI color support, disabled when piped or when NO_COLOR is set.
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
