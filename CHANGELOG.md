@@ -34,6 +34,7 @@ preference. Nothing in Homebrew or on a stock macOS installs a `pb` command.
   templates that get scaffolded into other people's projects, and add a test
   that fails if one comes back
 - `pb info` now prints `-` rather than an em dash for an empty field
+- Keep the original product brief in the repository as `docs/original-brief.md`, with a header saying what it is and that the command shipped as `pb`. It was published by the `.gitignore` change in the previous release; keeping it deliberately beats leaving it there by accident
 
 ## 0.8.0
 

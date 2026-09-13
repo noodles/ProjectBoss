@@ -1,3 +1,15 @@
+<!--
+The brief this tool was built from, written 2026-02-22 before any code existed.
+Kept as provenance: it records what was asked for, which is usually more useful
+than a description written afterwards.
+
+Two things have changed since. The command shipped as `pb`, not `proj`, because
+`proj` is already taken by PROJ, the cartographic projections library; the
+command names below have been updated so nobody follows a wrong one. And plenty
+was built that this brief never asked for: decision logs, GitHub repo creation,
+discovery and review. See the README for what the tool actually does.
+-->
+
 # I want to establish a better way of creating and maintaining all of the projects I'm working on.
 
 At the moment, I tend to create a new folder in whichever folder I think it appropriate. Then inside that I create a folder called docs and then inside that I create a file called {project_name}_initial_prompt.md
@@ -39,7 +51,7 @@ Assume I’m comfortable with the terminal and git, but I want something that �
 - No daemon or background service; everything is run on demand from commands.
 - Use plain text formats (Markdown, JSON or YAML) for data so I can inspect and edit by hand.
 - Prefer one self‑contained script or a very small CLI tool, plus config and data files.
-- I will run this from the terminal, e.g. `proj new`, `proj list`, etc.
+- I will run this from the terminal, e.g. `pb new`, `pb list`, etc.
 
 If you need to assume a language, choose one that is easy to run on macOS with no extra friction (for example Python or a POSIX shell script).
 
@@ -47,25 +59,25 @@ If you need to assume a language, choose one that is easy to run on macOS with n
 
 ## User experience and commands
 
-Design the UX around a single CLI entrypoint, referred to here as `proj` (actual name can be configurable).
+Design the UX around a single CLI entrypoint, referred to here as `pb` (actual name can be configurable).
 
 Support at least these top‑level commands:
 
-1. `proj new`
-2. `proj list`
-3. `proj info`
-4. `proj edit`
-5. `proj open`
-6. `proj rescan` (optional but desirable)
-7. `proj config` (basic config management)
+1. `pb new`
+2. `pb list`
+3. `pb info`
+4. `pb edit`
+5. `pb open`
+6. `pb rescan` (optional but desirable)
+7. `pb config` (basic config management)
 
-### 1) `proj new`: create a project
+### 1) `pb new`: create a project
 
 Goal: Make it pleasant and fast to create a new project with consistent structure and metadata, while still allowing me to think for a moment about naming and intent.
 
 Flow:
 
-- If I just type `proj new`, guide me through an interactive prompt flow:
+- If I just type `pb new`, guide me through an interactive prompt flow:
   - Ask for a **project name** (free text, e.g. “ClientX booking integration”).
     - Internally create a “slugified” folder name (e.g. `clientx-booking-integration`).
     - Support defaulting to the slug as the project ID.
@@ -95,7 +107,7 @@ Flow:
 Also support a non‑interactive mode, like:
 
 ```bash
-proj new --name "ClientX booking integration" \
+pb new --name "ClientX booking integration" \
          --category client \
          --summary "Migrate booking flows to new API" \
          --base ~/Clients \
@@ -103,13 +115,13 @@ proj new --name "ClientX booking integration" \
 ```
 
 
-### 2) `proj list`: view and filter projects
+### 2) `pb list`: view and filter projects
 
 Goal: Give me a “control panel” style view of all projects without leaving the terminal, with sensible defaults and filters.
 
 Behavior:
 
-- By default (`proj list` with no args), show a table including:
+- By default (`pb list` with no args), show a table including:
   - Project ID or short name
   - Human-readable name
   - Status (`active`, `stale`, `archived`)
@@ -122,17 +134,17 @@ Behavior:
   - `--category personal|client|company|experiment|…`
   - `--limit N`
   - `--sort created|updated|name|status` (with ascending/descending)
-- Consider a short mode (`proj list --short`) that prints a minimal view, suitable for piping into other tools.
+- Consider a short mode (`pb list --short`) that prints a minimal view, suitable for piping into other tools.
 - Ensure the output formatting is readable in a standard terminal (fixed width columns, truncation for long summaries, etc.).
 
 
-### 3) `proj info`: show project details
+### 3) `pb info`: show project details
 
 Goal: Quickly see all key metadata and links for a single project.
 
 Behavior:
 
-- `proj info <project_id_or_name>`
+- `pb info <project_id_or_name>`
   - Allow resolving by:
     - Exact ID / slug.
     - Partial match on name (if ambiguous, list choices).
@@ -147,13 +159,13 @@ Behavior:
 - Optionally allow a `--json` flag to output machine‑readable data.
 
 
-### 4) `proj edit`: update metadata
+### 4) `pb edit`: update metadata
 
 Goal: Let me adjust the one‑sentence summary, category, or other metadata after creation, in a safe and simple way.
 
 Behavior:
 
-- `proj edit <project_id>`:
+- `pb edit <project_id>`:
   - Interactively ask which fields to update: summary, category, maybe name (but be careful about renaming folders; see below).
   - For non‑destructive metadata fields (summary, category, tags), just update index + frontmatter.
   - If name changes, decide how to handle the folder:
@@ -163,21 +175,21 @@ Behavior:
 - Optionally support a non‑interactive form with flags.
 
 
-### 5) `proj open`: jump into a project
+### 5) `pb open`: jump into a project
 
 Goal: Make it easy to get back into a project with one command.
 
 Behavior:
 
-- `proj open <project_id>`
+- `pb open <project_id>`
   - By default:
     - Change directory to the project folder (for shells that support it) OR print the path so I can `cd` manually.
     - Optionally open the project folder in Finder or VS Code if a flag is provided (e.g. `--code`, `--finder`).
-  - `proj open --docs <project_id>` could open the docs folder or the initial prompt file in my configured editor.
+  - `pb open --docs <project_id>` could open the docs folder or the initial prompt file in my configured editor.
 
-You can implement `proj open` in a way that prints clearly usable commands if direct directory changing is not straightforward (e.g. `cd /path/...`).
+You can implement `pb open` in a way that prints clearly usable commands if direct directory changing is not straightforward (e.g. `cd /path/...`).
 
-### 6) `proj rescan`: reconcile timestamps and statuses
+### 6) `pb rescan`: reconcile timestamps and statuses
 
 Goal: Keep the index in sync with reality when files are edited directly.
 
@@ -187,8 +199,8 @@ Behavior:
   - `created_at`: timestamp when project was first created.
   - `last_worked_at`: last time the project was considered “worked on.”
 - For `last_worked_at`, make a reasonable and maintainable design:
-  - MVP: update `last_worked_at` whenever a `proj` command touches the project (e.g. `proj new`, `proj edit`, maybe `proj open` with a flag).
-  - Optional: provide `proj rescan` which:
+  - MVP: update `last_worked_at` whenever a `pb` command touches the project (e.g. `pb new`, `pb edit`, maybe `pb open` with a flag).
+  - Optional: provide `pb rescan` which:
     - Walks all project folders listed in the index.
     - Computes the last modification time of any file in each project.
     - Updates `last_worked_at` accordingly.
@@ -197,17 +209,17 @@ Behavior:
   - `stale`: last_worked_at >= 14 days ago and < 90 days ago.
   - `archived`: last_worked_at >= 90 days ago OR explicitly marked archived.
 - Implement status as derived rather than manually set where possible:
-  - Either recompute on each command or during `proj rescan`.
+  - Either recompute on each command or during `pb rescan`.
 - Provide a way to explicitly mark a project as archived:
 
 ```
-- `proj edit <id> --archive` or `proj archive <id>` (if you prefer a separate command).
+- `pb edit <id> --archive` or `pb archive <id>` (if you prefer a separate command).
 ```
 
     - Once archived, treat it as archived even if files change, unless explicitly unarchived.
 
 
-### 7) `proj config`: configuration
+### 7) `pb config`: configuration
 
 Goal: Give me a single place to configure paths, categories, thresholds, and defaults.
 
@@ -228,8 +240,8 @@ Behavior:
     - Initial prompt document name.
     - Readme or main summary file.
 - Provide simple subcommands to:
-  - `proj config show` (print current config).
-  - `proj config edit` (open config file in editor).
+  - `pb config show` (print current config).
+  - `pb config edit` (open config file in editor).
 - Ensure there are safe defaults if no config exists (e.g. create `~/Projects` by default).
 
 ***
@@ -247,7 +259,7 @@ Design goals:
 Implementation preferences:
 
 - Use JSON, YAML, or a single Markdown file with a structured table. YAML or JSON is likely easiest for reliable updates.
-- Default location example: `~/.proj_index.json` or `~/.proj/index.yml`.
+- Default location example: `~/.proj_index.json` or `~/.pb/index.yml`.
 
 For each project, store at least:
 
@@ -334,9 +346,9 @@ Clear expectations for status:
 
 User experience details:
 
-- Whenever I run `proj list`, I should see up‑to‑date statuses.
+- Whenever I run `pb list`, I should see up‑to‑date statuses.
 - If you recompute on every command, that’s fine for a modest number of projects.
-- If you rely on `proj rescan`, make that obvious in the documentation and provide a friendly message if the data might be out of date.
+- If you rely on `pb rescan`, make that obvious in the documentation and provide a friendly message if the data might be out of date.
 - If the tool explicitly archives a project, status should remain `archived` unless I deliberately unarchive it.
 
 ***
@@ -361,7 +373,7 @@ User experience details:
 Produce:
 
 1. The main CLI script or small codebase implementing:
-   - `proj new`, `proj list`, `proj info`, `proj edit`, `proj open`, `proj rescan`, `proj config`.
+   - `pb new`, `pb list`, `pb info`, `pb edit`, `pb open`, `pb rescan`, `pb config`.
 2. A default config file example.
 3. An example index file and example generated project structure.
 4. A short README explaining:

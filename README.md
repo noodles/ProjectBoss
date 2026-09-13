@@ -322,6 +322,12 @@ CalVer, `YYYY.MM.PATCH`. Releases up to 0.8.0 used SemVer. CalVer says nothing
 about compatibility, so any change to the on-disk index format is called out in
 its changelog entry.
 
+## Where this came from
+
+[`docs/original-brief.md`](docs/original-brief.md) is the brief the tool was
+built from, written before any code existed. It is kept as provenance: what was
+asked for tends to be more useful than a description written afterwards.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
